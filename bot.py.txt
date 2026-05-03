@@ -1,0 +1,4 @@
+import os
+
+TOKEN = os.getenv("8538536511:AAHEJ9Iugmcd6sHS3aNKLHenSsjb8EPL48g")
+API_TOKEN = os.getenv("f370ebe39667ebfa4e59c57a")
