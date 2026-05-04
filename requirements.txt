@@ -3,4 +3,3 @@ requests
 flask
 python-dotenv
 redis
-s
