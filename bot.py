@@ -20,13 +20,6 @@ TOKEN = os.getenv("TOKEN")
 API_TOKEN = os.getenv("API_TOKEN")
 REDIS_URL = os.getenv("REDIS_URL")
 
-if not TOKEN or not API_TOKEN:
-    raise ValueError("TOKEN / API_TOKEN belum diset")
-
-# ================= REDIS =================
-if not REDIS_URL:
-    raise ValueError("REDIS_URL belum diset")
-
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 # ================= DB =================
@@ -155,22 +148,29 @@ def tag_keyboard(page, max_page, uid):
     btn.append([InlineKeyboardButton("⬅️ Menu", callback_data="menu:back")])
     return InlineKeyboardMarkup(btn)
 
-# ================= MAIN =================
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Kirim nomor untuk cek 📱")
+    await update.message.reply_text(
+        "Kirim nomor langsung untuk cek 📱",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📜 History", callback_data="menu:history"),
+             InlineKeyboardButton("📊 Statistik", callback_data="menu:stats")]
+        ])
+    )
 
 # ================= HANDLE =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    text = update.message.text
+    text = update.message.text.strip()
 
     if not rate_limit(uid):
         return await update.message.reply_text("⏳ Tunggu...")
 
+    # ✅ LANGSUNG CEK NOMOR (NO MENU BLOCK)
     nomor = format_nomor(text)
 
     if not nomor or len(nomor) < 10:
-        return await update.message.reply_text("Kirim nomor yang valid")
+        return await update.message.reply_text("❌ Kirim nomor yang valid")
 
     msg = await update.message.reply_text("🔍 mencari...")
 
@@ -197,7 +197,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     wa_status = "✅ Terdaftar" if cek_wa(nomor) else "❌ Tidak"
 
-    # preview tag
     tag_text = ""
     for i, t in enumerate(tags[:10], start=1):
         name = html.escape(str(t.get("value", "-")))
@@ -237,11 +236,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data[0] == "showtag":
         uid = int(data[1])
-        data_user = user_data.get(uid)
-        if not data_user:
-            return
-
-        tags = data_user["tags"]
+        tags = user_data.get(uid, {}).get("tags", [])
         page = 0
         max_page = max(0, (len(tags)-1)//85)
 
@@ -254,12 +249,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data[0] == "tag":
         uid = int(data[1])
         page = int(data[2])
-
-        data_user = user_data.get(uid)
-        if not data_user:
-            return
-
-        tags = data_user["tags"]
+        tags = user_data.get(uid, {}).get("tags", [])
         max_page = max(0, (len(tags)-1)//85)
 
         return await q.edit_message_text(
@@ -270,23 +260,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data[0] == "menu":
         if data[1] == "history":
-            page = 0
-            total = count_history(uid)
-            max_page = max(0, (total-1)//20)
-            rows = get_history(uid, page)
-
+            rows = get_history(uid)
             text = "📜 History:\n\n"
             for i, (nomor, nama, ts) in enumerate(rows, start=1):
                 t = time.strftime('%d-%m %H:%M', time.localtime(ts))
                 text += f"{i}. {nomor}\n👤 {nama}\n🕒 {t}\n\n"
-
             return await q.edit_message_text(text)
 
         if data[1] == "stats":
             cursor.execute("SELECT total_check FROM stats WHERE user_id=?", (uid,))
             row = cursor.fetchone()
             total = row[0] if row else 0
-
             return await q.edit_message_text(f"📊 Total cek: {total}")
 
 # ================= RUN =================
