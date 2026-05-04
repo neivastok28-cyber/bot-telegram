@@ -9,6 +9,7 @@ from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
     CallbackQueryHandler,
+    CommandHandler,
     ContextTypes,
     filters,
 )
@@ -36,8 +37,6 @@ def format_number(text):
         number = "62" + number[1:]
     elif number.startswith("62"):
         pass
-    elif number.startswith("+62"):
-        number = number.replace("+", "")
     else:
         number = "62" + number
 
@@ -98,13 +97,20 @@ def getcontact_api(number):
 
 # ================= HANDLER =================
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 Bot aktif!\n\nKirim nomor untuk cek:\nContoh: 08123456789"
+    )
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    if not re.search(r"\d{8,}", text):
-        return await update.message.reply_text("❌ Masukkan nomor valid")
-
     number = format_number(text)
+
+    # VALIDASI FIX
+    if len(number) < 10:
+        return await update.message.reply_text("❌ Nomor tidak valid")
 
     # HISTORY
     if r:
@@ -133,7 +139,6 @@ async def send_page(update, context):
 
     page_tags = tags[start:end]
 
-    # FIX ERROR (NO f-string regex)
     formatted_tags = []
     for t in page_tags:
         clean = re.sub(r"\((.*?)\)", r"*(\1)*", t)
@@ -209,6 +214,7 @@ def main():
 
     app = ApplicationBuilder().token(TOKEN).build()
 
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(pagination))
     app.add_handler(MessageHandler(filters.Regex("^/history$"), history))
