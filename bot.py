@@ -24,6 +24,9 @@ if not TOKEN or not API_TOKEN:
     raise ValueError("TOKEN / API_TOKEN belum diset")
 
 # ================= REDIS =================
+if not REDIS_URL:
+    raise ValueError("REDIS_URL belum diset")
+
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 # ================= DB =================
@@ -45,7 +48,7 @@ last_check INTEGER)""")
 conn.commit()
 
 # ================= MEMORY =================
-user_mode = {}
+user_data = {}
 user_last = {}
 
 # ================= UTIL =================
@@ -67,7 +70,7 @@ def format_nomor(n):
 def wa_link(n):
     return f"https://wa.me/{n}"
 
-# ================= CACHE REDIS =================
+# ================= CACHE =================
 def get_cache(nomor):
     data = r.get(f"cache:{nomor}")
     return json.loads(data) if data else None
@@ -77,6 +80,15 @@ def save_cache(nomor, nama, tags):
         "nama": nama,
         "tags": tags
     }))
+
+# ================= WA CHECK =================
+def cek_wa(nomor):
+    try:
+        url = f"https://wa.me/{nomor}"
+        r = requests.get(url, timeout=5)
+        return "invalid" not in r.text.lower()
+    except:
+        return False
 
 # ================= API =================
 def call_api(nomor):
@@ -88,7 +100,7 @@ def call_api(nomor):
 
 # ================= HISTORY =================
 def save_history(uid, nomor, nama):
-    cursor.execute("INSERT INTO history (user_id, nomor, nama, created_at) VALUES (?, ?, ?, ?)",
+    cursor.execute("INSERT INTO history VALUES (NULL, ?, ?, ?, ?)",
                    (uid, nomor, nama, int(time.time())))
     conn.commit()
 
@@ -113,32 +125,29 @@ def update_stats(uid):
     """, (uid, int(time.time())))
     conn.commit()
 
-# ================= UI =================
-def main_menu():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔍 Cek Nomor", callback_data="menu:cek")],
-        [InlineKeyboardButton("📜 History", callback_data="menu:history")],
-        [InlineKeyboardButton("📊 Statistik", callback_data="menu:stats")]
-    ])
+# ================= TAG PAGE =================
+def build_tag_page(tags, page, per_page=85):
+    start = page * per_page
+    chunk = tags[start:start + per_page]
 
-def history_text(rows, page):
-    text = "📜 History:\n\n"
-    if not rows:
-        return "Belum ada history"
+    max_page = max(0, (len(tags)-1)//per_page)
+    text = f"🏷️ Semua Tag (Page {page+1}/{max_page+1})\n\n"
 
-    for i, (nomor, nama, ts) in enumerate(rows, start=1 + page*20):
-        t = time.strftime('%d-%m %H:%M', time.localtime(ts))
-        text += f"{i}. {nomor}\n👤 {nama}\n🕒 {t}\n\n"
+    for i, t in enumerate(chunk, start=1 + start):
+        name = html.escape(str(t.get("value", "-")))
+        count = t.get("count", 0)
+        text += f"{i}. {name} (<b>{count}</b>)\n"
+
     return text
 
-def history_keyboard(page, max_page, uid):
+def tag_keyboard(page, max_page, uid):
     btn = []
     nav = []
 
     if page > 0:
-        nav.append(InlineKeyboardButton("⬅️", callback_data=f"his:{uid}:{page-1}"))
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"tag:{uid}:{page-1}"))
     if page < max_page:
-        nav.append(InlineKeyboardButton("➡️", callback_data=f"his:{uid}:{page+1}"))
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"tag:{uid}:{page+1}"))
 
     if nav:
         btn.append(nav)
@@ -146,23 +155,22 @@ def history_keyboard(page, max_page, uid):
     btn.append([InlineKeyboardButton("⬅️ Menu", callback_data="menu:back")])
     return InlineKeyboardMarkup(btn)
 
-# ================= HANDLER =================
+# ================= MAIN =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Menu utama:", reply_markup=main_menu())
+    await update.message.reply_text("Kirim nomor untuk cek 📱")
 
+# ================= HANDLE =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    text = update.message.text
 
     if not rate_limit(uid):
         return await update.message.reply_text("⏳ Tunggu...")
 
-    if user_mode.get(uid) != "cek":
-        return await update.message.reply_text("Pilih menu dulu", reply_markup=main_menu())
+    nomor = format_nomor(text)
 
-    nomor = format_nomor(update.message.text)
-
-    if not nomor:
-        return await update.message.reply_text("Nomor tidak valid")
+    if not nomor or len(nomor) < 10:
+        return await update.message.reply_text("Kirim nomor yang valid")
 
     msg = await update.message.reply_text("🔍 mencari...")
 
@@ -187,13 +195,37 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_history(uid, nomor, nama)
     update_stats(uid)
 
-    text = f"""📱 {nomor}
+    wa_status = "✅ Terdaftar" if cek_wa(nomor) else "❌ Tidak"
+
+    # preview tag
+    tag_text = ""
+    for i, t in enumerate(tags[:10], start=1):
+        name = html.escape(str(t.get("value", "-")))
+        count = t.get("count", 0)
+        tag_text += f"{i}. {name} (<b>{count}</b>)\n"
+
+    user_data[uid] = {"tags": tags, "nama": nama, "nomor": nomor}
+
+    text_out = f"""📱 {nomor}
 💬 {wa_link(nomor)}
 
-👤 {nama}
-📊 {len(tags)} tag"""
+📲 WhatsApp: {wa_status}
 
-    await msg.edit_text(text, reply_markup=main_menu())
+👤 {nama}
+📊 {len(tags)} tag
+
+🏷️ Tag:
+{tag_text if tag_text else 'Tidak ada tag'}"""
+
+    await msg.edit_text(
+        text_out,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏷️ Semua Tag", callback_data=f"showtag:{uid}")],
+            [InlineKeyboardButton("📜 History", callback_data="menu:history"),
+             InlineKeyboardButton("📊 Statistik", callback_data="menu:stats")]
+        ]),
+        parse_mode="HTML"
+    )
 
 # ================= CALLBACK =================
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -203,50 +235,59 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = q.data.split(":")
     uid = update.effective_user.id
 
+    if data[0] == "showtag":
+        uid = int(data[1])
+        data_user = user_data.get(uid)
+        if not data_user:
+            return
+
+        tags = data_user["tags"]
+        page = 0
+        max_page = max(0, (len(tags)-1)//85)
+
+        return await q.edit_message_text(
+            build_tag_page(tags, page),
+            reply_markup=tag_keyboard(page, max_page, uid),
+            parse_mode="HTML"
+        )
+
+    if data[0] == "tag":
+        uid = int(data[1])
+        page = int(data[2])
+
+        data_user = user_data.get(uid)
+        if not data_user:
+            return
+
+        tags = data_user["tags"]
+        max_page = max(0, (len(tags)-1)//85)
+
+        return await q.edit_message_text(
+            build_tag_page(tags, page),
+            reply_markup=tag_keyboard(page, max_page, uid),
+            parse_mode="HTML"
+        )
+
     if data[0] == "menu":
-
-        if data[1] == "cek":
-            user_mode[uid] = "cek"
-            return await q.edit_message_text("Kirim nomor:", reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Menu", callback_data="menu:back")]
-            ]))
-
         if data[1] == "history":
             page = 0
             total = count_history(uid)
             max_page = max(0, (total-1)//20)
             rows = get_history(uid, page)
 
-            return await q.edit_message_text(
-                history_text(rows, page),
-                reply_markup=history_keyboard(page, max_page, uid)
-            )
+            text = "📜 History:\n\n"
+            for i, (nomor, nama, ts) in enumerate(rows, start=1):
+                t = time.strftime('%d-%m %H:%M', time.localtime(ts))
+                text += f"{i}. {nomor}\n👤 {nama}\n🕒 {t}\n\n"
+
+            return await q.edit_message_text(text)
 
         if data[1] == "stats":
             cursor.execute("SELECT total_check FROM stats WHERE user_id=?", (uid,))
             row = cursor.fetchone()
             total = row[0] if row else 0
 
-            return await q.edit_message_text(
-                f"📊 Total cek kamu: {total}",
-                reply_markup=main_menu()
-            )
-
-        if data[1] == "back":
-            user_mode[uid] = None
-            return await q.edit_message_text("Menu utama:", reply_markup=main_menu())
-
-    if data[0] == "his":
-        page = int(data[2])
-
-        total = count_history(uid)
-        max_page = max(0, (total-1)//20)
-        rows = get_history(uid, page)
-
-        return await q.edit_message_text(
-            history_text(rows, page),
-            reply_markup=history_keyboard(page, max_page, uid)
-        )
+            return await q.edit_message_text(f"📊 Total cek: {total}")
 
 # ================= RUN =================
 app = ApplicationBuilder().token(TOKEN).build()
