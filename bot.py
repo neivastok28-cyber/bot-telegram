@@ -9,14 +9,15 @@ from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
     CallbackQueryHandler,
+    CommandHandler,
     ContextTypes,
     filters,
 )
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
-
 REDIS_URL = os.getenv("REDIS_URL")
+
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
 
 logging.basicConfig(level=logging.INFO)
@@ -30,16 +31,21 @@ def format_number(text):
     return number
 
 def cek_wa(number):
-    url = f"https://wa.me/{number}"
     try:
-        res = requests.get(url)
+        res = requests.get(f"https://wa.me/{number}", timeout=5)
         return res.status_code == 200
     except:
         return False
 
 def fake_getcontact(number):
-    # SIMULASI DATA TAG
-    return [f"User {i} ({i})" for i in range(1, 201)]
+    # SIMULASI TAG BIAR KELIHATAN REAL
+    return [f"Kontak {i} ({i})" for i in range(1, 201)]
+
+def format_tag(t):
+    match = re.match(r"(.*)\((\d+)\)", t)
+    if match:
+        return f"{match.group(1).strip()} *({match.group(2)})*"
+    return t
 
 # ================= HANDLER =================
 
@@ -56,18 +62,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         r.lpush(f"history:{update.effective_user.id}", number)
 
     tags = fake_getcontact(number)
-
     wa_status = "✅ Aktif" if cek_wa(number) else "❌ Tidak aktif"
 
-    # SIMPAN KE MEMORY
+    # SIMPAN DATA
     context.user_data["tags"] = tags
     context.user_data["page"] = 0
+    context.user_data["number"] = number
+    context.user_data["wa"] = wa_status
 
-    await send_page(update, context, number, wa_status)
+    await send_page(update, context)
 
-async def send_page(update, context, number, wa_status):
+async def send_page(update, context):
     tags = context.user_data.get("tags", [])
     page = context.user_data.get("page", 0)
+    number = context.user_data.get("number", "")
+    wa_status = context.user_data.get("wa", "")
 
     per_page = 85
     start = page * per_page
@@ -75,9 +84,7 @@ async def send_page(update, context, number, wa_status):
 
     page_tags = tags[start:end]
 
-    text_tags = "\n".join(
-        [f"• {t.replace('(', '*(').replace(')', ')*')}" for t in page_tags]
-    )
+    text_tags = "\n".join([f"• {format_tag(t)}" for t in page_tags])
 
     msg = f"""
 📱 *{number}*
@@ -121,7 +128,7 @@ async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "prev":
         context.user_data["page"] -= 1
 
-    await send_page(update, context, "", "")
+    await send_page(update, context)
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not r:
@@ -130,19 +137,49 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = r.lrange(f"history:{update.effective_user.id}", 0, 9)
 
     if not data:
-        return await update.message.reply_text("Kosong")
+        return await update.message.reply_text("📜 History kosong")
 
     msg = "\n".join([f"• {x}" for x in data])
-    await update.message.reply_text(f"📜 History:\n{msg}")
+    await update.message.reply_text(f"📜 *History:*\n{msg}", parse_mode="Markdown")
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("📜 History", callback_data="history")]
+    ]
+    await update.message.reply_text(
+        "🤖 *Bot Premium Aktif*\n\nKirim nomor langsung untuk cek 🔍",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "history":
+        if not r:
+            return await query.edit_message_text("❌ Redis tidak aktif")
+
+        data = r.lrange(f"history:{query.from_user.id}", 0, 9)
+
+        if not data:
+            return await query.edit_message_text("📜 History kosong")
+
+        msg = "\n".join([f"• {x}" for x in data])
+        await query.edit_message_text(f"📜 *History:*\n{msg}", parse_mode="Markdown")
 
 # ================= MAIN =================
 
 def main():
+    if not TOKEN:
+        raise ValueError("BOT_TOKEN tidak ditemukan di Railway")
+
     app = ApplicationBuilder().token(TOKEN).build()
 
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(CallbackQueryHandler(pagination))
-    app.add_handler(MessageHandler(filters.Regex("^/history$"), history))
+    app.add_handler(CallbackQueryHandler(pagination, pattern="^(next|prev)$"))
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern="^history$"))
 
     print("BOT RUNNING...")
     app.run_polling()
