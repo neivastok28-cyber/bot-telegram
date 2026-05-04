@@ -26,10 +26,18 @@ TOKEN = os.getenv("TOKEN")
 API_TOKEN = os.getenv("API_TOKEN")
 REDIS_URL = os.getenv("REDIS_URL")
 
-# ================= REDIS =================
+if not TOKEN:
+    raise ValueError("TOKEN tidak ditemukan")
+if not API_TOKEN:
+    raise ValueError("API_TOKEN tidak ditemukan")
+
+# ================= REDIS (SAFE MODE) =================
 try:
     import redis
-    r = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
+    if REDIS_URL:
+        r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    else:
+        r = None
 except:
     r = None
 
@@ -65,39 +73,35 @@ def wa_link(n):
 
 # ================= CACHE =================
 def save_cache(nomor, nama, tags):
-    if not r:
-        return
-    r.setex(f"cache:{nomor}", 86400, str({"nama": nama, "tags": tags}))
+    if r:
+        r.setex(f"cache:{nomor}", 86400, str({"nama": nama, "tags": tags}))
 
 def get_cache(nomor):
-    if not r:
-        return None
-    data = r.get(f"cache:{nomor}")
-    if data:
-        return eval(data)
+    if r:
+        data = r.get(f"cache:{nomor}")
+        if data:
+            return eval(data)
     return None
 
 # ================= HISTORY =================
 def save_history(uid, nomor):
-    if not r:
-        return
-    r.lpush(f"history:{uid}", nomor)
+    if r:
+        r.lpush(f"history:{uid}", nomor)
 
 def get_history(uid):
-    if not r:
-        return []
-    return r.lrange(f"history:{uid}", 0, 100)
+    if r:
+        return r.lrange(f"history:{uid}", 0, 100)
+    return []
 
-# ================= STATS =================
+# ================= STAT =================
 def add_stat(uid):
-    if not r:
-        return
-    r.incr(f"stat:{uid}")
+    if r:
+        r.incr(f"stat:{uid}")
 
 def get_stat(uid):
-    if not r:
-        return 0
-    return int(r.get(f"stat:{uid}") or 0)
+    if r:
+        return int(r.get(f"stat:{uid}") or 0)
+    return 0
 
 # ================= API =================
 def call_api(nomor):
@@ -107,7 +111,7 @@ def call_api(nomor):
     except:
         return None
 
-# ================= PAGINATION TAG =================
+# ================= TAG PAGING =================
 def build_tags(tags, page, per_page=85):
     start = page * per_page
     chunk = tags[start:start + per_page]
@@ -120,7 +124,7 @@ def build_tags(tags, page, per_page=85):
 
     return text
 
-# ================= PAGINATION HISTORY =================
+# ================= HISTORY PAGING =================
 def build_history(data, page, per_page=20):
     start = page * per_page
     chunk = data[start:start + per_page]
@@ -134,20 +138,23 @@ def build_history(data, page, per_page=20):
 # ================= KEYBOARD =================
 def keyboard(page, max_page, prefix):
     btn = []
+
     if page > 0:
         btn.append(InlineKeyboardButton("⬅️", callback_data=f"{prefix}:{page-1}"))
+
     if page < max_page:
         btn.append(InlineKeyboardButton("➡️", callback_data=f"{prefix}:{page+1}"))
+
     return InlineKeyboardMarkup([btn])
 
-# ================= HANDLE NOMOR =================
+# ================= HANDLE =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     uid = update.effective_user.id
     text = update.message.text
 
     if not rate_limit(uid):
-        return await update.message.reply_text("⏳ tunggu sebentar")
+        return await update.message.reply_text("⏳ tunggu...")
 
     nomor = format_nomor(text)
     if not nomor:
@@ -162,6 +169,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tags = cache["tags"]
     else:
         data = call_api(nomor)
+
         if not data:
             return await msg.edit_text("❌ API error")
 
@@ -178,7 +186,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_stat(uid)
 
     page = 0
-    max_page = max(0, (len(tags)-1)//85)
+    max_page = max(0, (len(tags) - 1) // 85)
 
     user_data[uid] = {"tags": tags, "nomor": nomor, "nama": nama}
 
@@ -198,6 +206,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= BUTTON =================
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     q = update.callback_query
     await q.answer()
 
@@ -216,7 +225,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nomor = d["nomor"]
         nama = d["nama"]
 
-        max_page = max(0, (len(tags)-1)//85)
+        max_page = max(0, (len(tags) - 1) // 85)
 
         text_msg = f"""📱 {nomor}
 💬 {wa_link(nomor)}
@@ -237,21 +246,31 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         page = int(data[2])
 
         hist = get_history(uid)
-        max_page = max(0, (len(hist)-1)//20)
+        max_page = max(0, (len(hist) - 1) // 20)
 
         await q.edit_message_text(
             build_history(hist, page),
             reply_markup=keyboard(page, max_page, f"history:{uid}")
         )
 
-# ================= MENU =================
+    elif action == "stat":
+        uid = update.effective_user.id
+        total = get_stat(uid)
+
+        await q.edit_message_text(f"📊 Total cek kamu: {total}")
+
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    uid = update.effective_user.id
+
     kb = [
-        [InlineKeyboardButton("📜 History", callback_data=f"history:{update.effective_user.id}:0")],
+        [InlineKeyboardButton("📜 History", callback_data=f"history:{uid}:0")],
         [InlineKeyboardButton("📊 Statistik", callback_data="stat")]
     ]
+
     await update.message.reply_text(
-        "🤖 Bot Ready\n\nKetik nomor langsung untuk cek",
+        "🤖 Bot aktif\n\nKetik nomor langsung untuk cek",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
