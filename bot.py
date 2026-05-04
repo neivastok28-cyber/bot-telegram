@@ -5,6 +5,7 @@ import time
 import html
 import sqlite3
 import requests
+import asyncio
 from dotenv import load_dotenv
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -27,11 +28,11 @@ TOKEN = os.getenv("TOKEN")
 API_TOKEN = os.getenv("API_TOKEN")
 
 if not TOKEN:
-    raise ValueError("TOKEN tidak ditemukan di environment Railway")
+    raise ValueError("TOKEN tidak ditemukan di Railway Variables")
 if not API_TOKEN:
-    raise ValueError("API_TOKEN tidak ditemukan di environment Railway")
+    raise ValueError("API_TOKEN tidak ditemukan di Railway Variables")
 
-# ================= FLASK (PING / UPTIME) =================
+# ================= FLASK (PING) =================
 app_web = Flask(__name__)
 
 @app_web.route("/")
@@ -71,6 +72,7 @@ def rate_limit(uid, delay=2):
 # ================= FORMAT NOMOR =================
 def format_nomor(n):
     n = re.sub(r"\D", "", n)
+
     if not n:
         return ""
 
@@ -233,7 +235,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Bot aktif")
 
-# ================= TELEGRAM APP =================
+# ================= APP =================
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
@@ -242,15 +244,19 @@ app.add_handler(CallbackQueryHandler(button))
 
 print("BOT & SERVER RUNNING...")
 
-# ================= RUN (RAILWAY STABLE MODE) =================
-if __name__ == "__main__":
+# ================= RAILWAY ENTRY =================
+async def main():
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+
     from threading import Thread
+    Thread(target=lambda: app_web.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 8080))
+    )).start()
 
-    # jalanin bot telegram
-    def run_bot():
-        app.run_polling()
+    await asyncio.Event().wait()
 
-    Thread(target=run_bot).start()
-
-    # jalanin flask server
-    app_web.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+if __name__ == "__main__":
+    asyncio.run(main())
