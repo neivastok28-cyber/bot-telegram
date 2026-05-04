@@ -13,18 +13,22 @@ from telegram.ext import (
     filters,
 )
 
-# ================= CONFIG =================
-print("TOKEN:", os.getenv("BOT_TOKEN"))
+# ================= DEBUG =================
+print("BOT TOKEN:", os.getenv("BOT_TOKEN"))
+print("GC TOKEN:", os.getenv("GC_TOKEN"))
 print("REDIS:", os.getenv("REDIS_URL"))
 
+# ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
-REDIS_URL = os.getenv("REDIS_URL")
+GC_TOKEN = os.getenv("GC_TOKEN")
 
+REDIS_URL = os.getenv("REDIS_URL")
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
 
 logging.basicConfig(level=logging.INFO)
 
-# ================= FORMAT NOMOR =================
+# ================= FUNCTION =================
+
 def format_number(text):
     number = re.sub(r"\D", "", text)
 
@@ -32,42 +36,81 @@ def format_number(text):
         number = "62" + number[1:]
     elif number.startswith("62"):
         pass
-    elif number.startswith("8"):
+    elif number.startswith("+62"):
+        number = number.replace("+", "")
+    else:
         number = "62" + number
 
     return number
 
-# ================= CEK WHATSAPP =================
+
 def cek_wa(number):
-    url = f"https://wa.me/{number}"
     try:
-        res = requests.get(url)
+        res = requests.get(f"https://wa.me/{number}", timeout=5)
         return res.status_code == 200
     except:
         return False
 
-# ================= FAKE GETCONTACT =================
-def fake_getcontact(number):
-    return [f"User {i} ({i})" for i in range(1, 201)]
+
+def getcontact_api(number):
+    try:
+        if not GC_TOKEN:
+            return ["❌ GC TOKEN belum diset"]
+
+        # ===== CACHE =====
+        if r:
+            cache = r.get(f"gc:{number}")
+            if cache:
+                return eval(cache)
+
+        url = "https://gcontact.id/api"
+        params = {
+            "token": GC_TOKEN,
+            "nomor": number
+        }
+
+        res = requests.get(url, params=params, timeout=10)
+        data = res.json()
+
+        print("API RESPONSE:", data)
+
+        if "data" not in data:
+            return ["Tidak ada data"]
+
+        result = []
+
+        for item in data["data"]:
+            if isinstance(item, dict):
+                result.append(item.get("name", str(item)))
+            else:
+                result.append(str(item))
+
+        # ===== SAVE CACHE =====
+        if r:
+            r.setex(f"gc:{number}", 3600, str(result))
+
+        return result if result else ["Tidak ada tag"]
+
+    except Exception as e:
+        print("API ERROR:", e)
+        return ["Error API"]
+
 
 # ================= HANDLER =================
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    if not re.search(r"\d{8,15}", text):
-        return await update.message.reply_text("❌ Nomor tidak valid")
+    if not re.search(r"\d{8,}", text):
+        return await update.message.reply_text("❌ Masukkan nomor valid")
 
     number = format_number(text)
 
-    if not number.startswith("628"):
-        return await update.message.reply_text("❌ Gunakan nomor Indonesia (628xxx)")
-
-    # SAVE HISTORY
+    # ===== SAVE HISTORY =====
     if r:
         r.lpush(f"history:{update.effective_user.id}", number)
 
-    tags = fake_getcontact(number)
-
+    tags = getcontact_api(number)
     wa_status = "✅ Aktif" if cek_wa(number) else "❌ Tidak aktif"
 
     context.user_data["tags"] = tags
@@ -77,7 +120,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_page(update, context)
 
-# ================= PAGINATION =================
+
 async def send_page(update, context):
     tags = context.user_data.get("tags", [])
     page = context.user_data.get("page", 0)
@@ -90,11 +133,14 @@ async def send_page(update, context):
 
     page_tags = tags[start:end]
 
-    text_tags = "\n".join(
-        [f"• {t.replace('(', '*(').replace(')', ')*')}" for t in page_tags]
-    )
+    # ===== FORMAT TAG (BOLD DALAM KURUNG) =====
+    text_tags = "\n".join([
+        f"• {re.sub(r'\\((.*?)\\)', r'*(\\1)*', t)}"
+        for t in page_tags
+    ])
 
-    msg = f"""📱 *{number}*
+    msg = f"""
+📱 *{number}*
 🌐 https://wa.me/{number}
 
 WhatsApp: {wa_status}
@@ -103,13 +149,15 @@ Total Tag: *{len(tags)}*
 {text_tags}
 """
 
-    buttons = []
-    if start > 0:
-        buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data="prev"))
-    if end < len(tags):
-        buttons.append(InlineKeyboardButton("Next ➡️", callback_data="next"))
+    keyboard = []
 
-    reply_markup = InlineKeyboardMarkup([buttons]) if buttons else None
+    if start > 0:
+        keyboard.append(InlineKeyboardButton("⬅️ Prev", callback_data="prev"))
+
+    if end < len(tags):
+        keyboard.append(InlineKeyboardButton("Next ➡️", callback_data="next"))
+
+    reply_markup = InlineKeyboardMarkup([keyboard]) if keyboard else None
 
     if update.callback_query:
         await update.callback_query.edit_message_text(
@@ -124,6 +172,7 @@ Total Tag: *{len(tags)}*
             reply_markup=reply_markup,
         )
 
+
 async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -135,7 +184,7 @@ async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_page(update, context)
 
-# ================= HISTORY =================
+
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not r:
         return await update.message.reply_text("❌ Redis tidak aktif")
@@ -148,10 +197,12 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join([f"• {x}" for x in data])
     await update.message.reply_text(f"📜 History:\n{msg}")
 
+
 # ================= MAIN =================
+
 def main():
     if not TOKEN:
-        print("❌ TOKEN KOSONG!")
+        print("❌ BOT TOKEN BELUM DISET")
         return
 
     app = ApplicationBuilder().token(TOKEN).build()
@@ -160,8 +211,9 @@ def main():
     app.add_handler(CallbackQueryHandler(pagination))
     app.add_handler(MessageHandler(filters.Regex("^/history$"), history))
 
-    print("BOT RUNNING...")
+    print("🚀 BOT RUNNING...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
