@@ -5,9 +5,8 @@ import time
 import html
 import sqlite3
 import requests
-import asyncio
+
 from dotenv import load_dotenv
-from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -28,20 +27,9 @@ TOKEN = os.getenv("TOKEN")
 API_TOKEN = os.getenv("API_TOKEN")
 
 if not TOKEN:
-    raise ValueError("TOKEN tidak ditemukan di Railway Variables")
+    raise ValueError("TOKEN tidak ditemukan di environment (Railway/GitHub)")
 if not API_TOKEN:
-    raise ValueError("API_TOKEN tidak ditemukan di Railway Variables")
-
-# ================= FLASK (PING) =================
-app_web = Flask(__name__)
-
-@app_web.route("/")
-def home():
-    return "BOT ACTIVE"
-
-@app_web.route("/ping")
-def ping():
-    return "OK"
+    raise ValueError("API_TOKEN tidak ditemukan di environment (Railway/GitHub)")
 
 # ================= DB =================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
@@ -72,7 +60,6 @@ def rate_limit(uid, delay=2):
 # ================= FORMAT NOMOR =================
 def format_nomor(n):
     n = re.sub(r"\D", "", n)
-
     if not n:
         return ""
 
@@ -107,11 +94,16 @@ def call_api(nomor):
     try:
         url = f"https://gcontact.id/api?token={API_TOKEN}&nomor={nomor}"
         r = requests.get(url, timeout=10)
-        return r.json()
-    except:
+        data = r.json()
+
+        print("DEBUG API RESPONSE:", data)  # penting untuk Railway log
+
+        return data
+    except Exception as e:
+        print("API ERROR:", e)
         return None
 
-# ================= PAGE =================
+# ================= PAGINATION =================
 def build_page(tags, page, per_page=85):
     start = page * per_page
     chunk = tags[start:start + per_page]
@@ -125,7 +117,6 @@ def build_page(tags, page, per_page=85):
 
     return text
 
-# ================= KEYBOARD =================
 def build_keyboard(page, max_page, uid):
     btn = []
 
@@ -165,14 +156,21 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if "||" in x:
                     v, c = x.split("||", 1)
                     tags.append({"value": v, "count": int(c or 0)})
+
     else:
         data = call_api(nomor)
 
-        if not data or not data.get("success"):
-            await msg.edit_text("❌ data tidak ditemukan")
+        # FIX UTAMA: jangan terlalu ketat cek "success"
+        if not data:
+            await msg.edit_text("❌ API tidak merespon")
             return
 
-        gc = data["data"]["getcontact"]
+        gc = data.get("data", {}).get("getcontact")
+
+        if not gc:
+            await msg.edit_text("❌ data tidak ditemukan / API berubah")
+            return
+
         nama = gc.get("primary", "-")
         tags = gc.get("tags", [])
 
@@ -233,30 +231,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot aktif")
+    await update.message.reply_text("🤖 Bot aktif 🚀")
 
-# ================= APP =================
+# ================= MAIN =================
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 app.add_handler(CallbackQueryHandler(button))
 
-print("BOT & SERVER RUNNING...")
-
-# ================= RAILWAY ENTRY =================
-async def main():
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-
-    from threading import Thread
-    Thread(target=lambda: app_web.run(
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 8080))
-    )).start()
-
-    await asyncio.Event().wait()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+print("BOT RUNNING...")
+app.run_polling()
