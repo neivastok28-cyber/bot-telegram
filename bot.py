@@ -1,12 +1,9 @@
 import logging
-import os
-import re
-import time
-import html
-import sqlite3
-import requests
+logging.basicConfig(level=logging.INFO)
 
+import os, re, time, html, sqlite3, requests, json, redis
 from dotenv import load_dotenv
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -17,39 +14,41 @@ from telegram.ext import (
     filters
 )
 
-# ================= LOG =================
-logging.basicConfig(level=logging.INFO)
-
 # ================= ENV =================
 load_dotenv()
-
 TOKEN = os.getenv("TOKEN")
 API_TOKEN = os.getenv("API_TOKEN")
+REDIS_URL = os.getenv("REDIS_URL")
 
-if not TOKEN:
-    raise ValueError("TOKEN tidak ditemukan di environment (Railway/GitHub)")
-if not API_TOKEN:
-    raise ValueError("API_TOKEN tidak ditemukan di environment (Railway/GitHub)")
+if not TOKEN or not API_TOKEN:
+    raise ValueError("TOKEN / API_TOKEN belum diset")
+
+# ================= REDIS =================
+r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 # ================= DB =================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS cache (
-    nomor TEXT PRIMARY KEY,
-    nama TEXT,
-    tags TEXT,
-    updated_at INTEGER
-)
-""")
+cursor.execute("""CREATE TABLE IF NOT EXISTS history (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+user_id INTEGER,
+nomor TEXT,
+nama TEXT,
+created_at INTEGER)""")
+
+cursor.execute("""CREATE TABLE IF NOT EXISTS stats (
+user_id INTEGER PRIMARY KEY,
+total_check INTEGER DEFAULT 0,
+last_check INTEGER)""")
+
 conn.commit()
 
 # ================= MEMORY =================
-user_data = {}
+user_mode = {}
 user_last = {}
 
-# ================= RATE LIMIT =================
+# ================= UTIL =================
 def rate_limit(uid, delay=2):
     now = time.time()
     if now - user_last.get(uid, 0) < delay:
@@ -57,183 +56,199 @@ def rate_limit(uid, delay=2):
     user_last[uid] = now
     return True
 
-# ================= FORMAT NOMOR =================
 def format_nomor(n):
     n = re.sub(r"\D", "", n)
-    if not n:
-        return ""
-
     if n.startswith("0"):
         n = "62" + n[1:]
     elif n.startswith("8"):
         n = "62" + n
-    elif not n.startswith("62"):
-        n = "62" + n
-
     return n
 
-# ================= WA LINK =================
 def wa_link(n):
     return f"https://wa.me/{n}"
 
-# ================= CACHE =================
-def save_cache(nomor, nama, tags):
-    raw = "\n".join([f"{t.get('value','')}||{t.get('count',0)}" for t in tags])
-
-    cursor.execute("""
-    INSERT OR REPLACE INTO cache VALUES (?, ?, ?, ?)
-    """, (nomor, nama, raw, int(time.time())))
-    conn.commit()
-
+# ================= CACHE REDIS =================
 def get_cache(nomor):
-    cursor.execute("SELECT nama, tags FROM cache WHERE nomor=?", (nomor,))
-    return cursor.fetchone()
+    data = r.get(f"cache:{nomor}")
+    return json.loads(data) if data else None
+
+def save_cache(nomor, nama, tags):
+    r.setex(f"cache:{nomor}", 86400, json.dumps({
+        "nama": nama,
+        "tags": tags
+    }))
 
 # ================= API =================
 def call_api(nomor):
     try:
         url = f"https://gcontact.id/api?token={API_TOKEN}&nomor={nomor}"
-        r = requests.get(url, timeout=10)
-        data = r.json()
-
-        print("DEBUG API RESPONSE:", data)  # penting untuk Railway log
-
-        return data
-    except Exception as e:
-        print("API ERROR:", e)
+        return requests.get(url, timeout=10).json()
+    except:
         return None
 
-# ================= PAGINATION =================
-def build_page(tags, page, per_page=85):
-    start = page * per_page
-    chunk = tags[start:start + per_page]
+# ================= HISTORY =================
+def save_history(uid, nomor, nama):
+    cursor.execute("INSERT INTO history (user_id, nomor, nama, created_at) VALUES (?, ?, ?, ?)",
+                   (uid, nomor, nama, int(time.time())))
+    conn.commit()
 
-    text = "🏷️ Semua Tag:\n\n"
+def get_history(uid, page=0, per_page=20):
+    offset = page * per_page
+    cursor.execute("SELECT nomor, nama, created_at FROM history WHERE user_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                   (uid, per_page, offset))
+    return cursor.fetchall()
 
-    for i, t in enumerate(chunk, start=1 + start):
-        name = html.escape(str(t.get("value", "-")))
-        count = int(t.get("count", 0) or 0)
-        text += f"{i}. {name} >> <b>{count} Tag</b>\n"
+def count_history(uid):
+    cursor.execute("SELECT COUNT(*) FROM history WHERE user_id=?", (uid,))
+    return cursor.fetchone()[0]
 
+# ================= STATS =================
+def update_stats(uid):
+    cursor.execute("""
+    INSERT INTO stats (user_id, total_check, last_check)
+    VALUES (?, 1, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+    total_check = total_check + 1,
+    last_check = excluded.last_check
+    """, (uid, int(time.time())))
+    conn.commit()
+
+# ================= UI =================
+def main_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔍 Cek Nomor", callback_data="menu:cek")],
+        [InlineKeyboardButton("📜 History", callback_data="menu:history")],
+        [InlineKeyboardButton("📊 Statistik", callback_data="menu:stats")]
+    ])
+
+def history_text(rows, page):
+    text = "📜 History:\n\n"
+    if not rows:
+        return "Belum ada history"
+
+    for i, (nomor, nama, ts) in enumerate(rows, start=1 + page*20):
+        t = time.strftime('%d-%m %H:%M', time.localtime(ts))
+        text += f"{i}. {nomor}\n👤 {nama}\n🕒 {t}\n\n"
     return text
 
-def build_keyboard(page, max_page, uid):
+def history_keyboard(page, max_page, uid):
     btn = []
+    nav = []
 
     if page > 0:
-        btn.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"{uid}:{page-1}"))
-
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"his:{uid}:{page-1}"))
     if page < max_page:
-        btn.append(InlineKeyboardButton("Next ➡️", callback_data=f"{uid}:{page+1}"))
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"his:{uid}:{page+1}"))
 
-    return InlineKeyboardMarkup([btn])
+    if nav:
+        btn.append(nav)
 
-# ================= HANDLE MESSAGE =================
+    btn.append([InlineKeyboardButton("⬅️ Menu", callback_data="menu:back")])
+    return InlineKeyboardMarkup(btn)
+
+# ================= HANDLER =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🤖 Menu utama:", reply_markup=main_menu())
+
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     uid = update.effective_user.id
-    text = update.message.text
 
     if not rate_limit(uid):
-        await update.message.reply_text("⏳ terlalu cepat")
-        return
+        return await update.message.reply_text("⏳ Tunggu...")
 
-    msg = await update.message.reply_text("🔍 mencari data...")
+    if user_mode.get(uid) != "cek":
+        return await update.message.reply_text("Pilih menu dulu", reply_markup=main_menu())
 
-    nomor = format_nomor(text)
+    nomor = format_nomor(update.message.text)
+
     if not nomor:
-        await msg.edit_text("❌ nomor tidak valid")
-        return
+        return await update.message.reply_text("Nomor tidak valid")
 
-    cached = get_cache(nomor)
+    msg = await update.message.reply_text("🔍 mencari...")
 
-    if cached:
-        nama, tags_raw = cached
-        tags = []
+    data = get_cache(nomor)
 
-        if tags_raw:
-            for x in tags_raw.split("\n"):
-                if "||" in x:
-                    v, c = x.split("||", 1)
-                    tags.append({"value": v, "count": int(c or 0)})
-
+    if data:
+        nama, tags = data["nama"], data["tags"]
     else:
-        data = call_api(nomor)
+        res = call_api(nomor)
+        if not res:
+            return await msg.edit_text("API error")
 
-        # FIX UTAMA: jangan terlalu ketat cek "success"
-        if not data:
-            await msg.edit_text("❌ API tidak merespon")
-            return
-
-        gc = data.get("data", {}).get("getcontact")
-
+        gc = res.get("data", {}).get("getcontact")
         if not gc:
-            await msg.edit_text("❌ data tidak ditemukan / API berubah")
-            return
+            return await msg.edit_text("Data tidak ditemukan")
 
         nama = gc.get("primary", "-")
         tags = gc.get("tags", [])
 
         save_cache(nomor, nama, tags)
 
-    page = 0
-    max_page = max(0, (len(tags) - 1) // 85)
+    save_history(uid, nomor, nama)
+    update_stats(uid)
 
-    user_data[uid] = {"tags": tags, "nama": nama, "nomor": nomor}
-
-    text_msg = f"""📱 {nomor}
+    text = f"""📱 {nomor}
 💬 {wa_link(nomor)}
 
 👤 {nama}
-📊 {len(tags)} tag
+📊 {len(tags)} tag"""
 
-{build_page(tags, page)}"""
-
-    await msg.edit_text(
-        text_msg,
-        reply_markup=build_keyboard(page, max_page, uid),
-        parse_mode="HTML"
-    )
+    await msg.edit_text(text, reply_markup=main_menu())
 
 # ================= CALLBACK =================
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     q = update.callback_query
     await q.answer()
 
-    uid, page = q.data.split(":")
-    uid = int(uid)
-    page = int(page)
+    data = q.data.split(":")
+    uid = update.effective_user.id
 
-    data = user_data.get(uid)
-    if not data:
-        return
+    if data[0] == "menu":
 
-    tags = data["tags"]
-    nama = data["nama"]
-    nomor = data["nomor"]
+        if data[1] == "cek":
+            user_mode[uid] = "cek"
+            return await q.edit_message_text("Kirim nomor:", reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Menu", callback_data="menu:back")]
+            ]))
 
-    max_page = max(0, (len(tags) - 1) // 85)
+        if data[1] == "history":
+            page = 0
+            total = count_history(uid)
+            max_page = max(0, (total-1)//20)
+            rows = get_history(uid, page)
 
-    text_msg = f"""📱 {nomor}
-💬 {wa_link(nomor)}
+            return await q.edit_message_text(
+                history_text(rows, page),
+                reply_markup=history_keyboard(page, max_page, uid)
+            )
 
-👤 {nama}
-📊 {len(tags)} tag
+        if data[1] == "stats":
+            cursor.execute("SELECT total_check FROM stats WHERE user_id=?", (uid,))
+            row = cursor.fetchone()
+            total = row[0] if row else 0
 
-{build_page(tags, page)}"""
+            return await q.edit_message_text(
+                f"📊 Total cek kamu: {total}",
+                reply_markup=main_menu()
+            )
 
-    await q.edit_message_text(
-        text_msg,
-        reply_markup=build_keyboard(page, max_page, uid),
-        parse_mode="HTML"
-    )
+        if data[1] == "back":
+            user_mode[uid] = None
+            return await q.edit_message_text("Menu utama:", reply_markup=main_menu())
 
-# ================= START =================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot aktif 🚀")
+    if data[0] == "his":
+        page = int(data[2])
 
-# ================= MAIN =================
+        total = count_history(uid)
+        max_page = max(0, (total-1)//20)
+        rows = get_history(uid, page)
+
+        return await q.edit_message_text(
+            history_text(rows, page),
+            reply_markup=history_keyboard(page, max_page, uid)
+        )
+
+# ================= RUN =================
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
@@ -241,4 +256,4 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 app.add_handler(CallbackQueryHandler(button))
 
 print("BOT RUNNING...")
-app.run_polling()
+app.run_polling(drop_pending_updates=True)
