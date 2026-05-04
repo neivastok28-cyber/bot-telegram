@@ -57,7 +57,7 @@ def getcontact_api(number):
         if not GC_TOKEN:
             return ["❌ GC TOKEN belum diset"]
 
-        # ===== CACHE =====
+        # CACHE
         if r:
             cache = r.get(f"gc:{number}")
             if cache:
@@ -85,7 +85,7 @@ def getcontact_api(number):
             else:
                 result.append(str(item))
 
-        # ===== SAVE CACHE =====
+        # SAVE CACHE
         if r:
             r.setex(f"gc:{number}", 3600, str(result))
 
@@ -106,7 +106,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     number = format_number(text)
 
-    # ===== SAVE HISTORY =====
+    # HISTORY
     if r:
         r.lpush(f"history:{update.effective_user.id}", number)
 
@@ -133,11 +133,13 @@ async def send_page(update, context):
 
     page_tags = tags[start:end]
 
-    # ===== FORMAT TAG (BOLD DALAM KURUNG) =====
-    text_tags = "\n".join([
-        f"• {re.sub(r'\\((.*?)\\)', r'*(\\1)*', t)}"
-        for t in page_tags
-    ])
+    # FIX ERROR (NO f-string regex)
+    formatted_tags = []
+    for t in page_tags:
+        clean = re.sub(r"\((.*?)\)", r"*(\1)*", t)
+        formatted_tags.append(f"• {clean}")
+
+    text_tags = "\n".join(formatted_tags)
 
     msg = f"""
 📱 *{number}*
