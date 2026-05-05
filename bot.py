@@ -30,6 +30,10 @@ r = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else Non
 
 logging.basicConfig(level=logging.INFO)
 
+# ================= GLOBAL SESSION =================
+session = None
+
+
 # ================= HELPER =================
 
 def format_number(text):
@@ -44,73 +48,51 @@ def format_number(text):
     return None
 
 
-# 🔥 NORMALISASI (tanpa rusak tampilan)
-def normalize_tag(val):
-    val = val.strip()
-    val = re.sub(r"\s+", " ", val)
-    return val
-
-
-# 🔥 RAPIIIN NAMA
-def smart_title(val):
-    return " ".join([w.capitalize() for w in val.split()])
-
-
-# 🔥 ASYNC API
+# 🔥 SUPER FAST + RETRY API
 async def get_gcontact(number):
-    try:
-        url = f"https://gcontact.id/api?token={GC_TOKEN}&nomor={number}"
-        async with aiohttp.ClientSession() as session:
+    global session
+
+    url = f"https://gcontact.id/api?token={GC_TOKEN}&nomor={number}"
+
+    for i in range(3):  # retry 3x
+        try:
             async with session.get(url, timeout=10) as res:
-                return await res.json()
-    except:
-        return {}
+                data = await res.json()
+
+                if data and data.get("success"):
+                    return data
+
+        except Exception as e:
+            print("RETRY:", e)
+
+        await asyncio.sleep(2)
+
+    return {}
 
 
-# 🔥 EXTRACT TAG (GABUNG CASE INSENSITIVE)
+# 🔥 NORMALISASI + GABUNG TAG
 def extract_tags(data):
     try:
         tags_raw = data.get("data", {}).get("getcontact", {}).get("tags", [])
 
-        temp = {}
+        cleaned = []
 
         for t in tags_raw:
             val = t.get("value")
             if not val:
                 continue
 
-            val = normalize_tag(val)
+            val = val.strip().lower()
+            val = re.sub(r"\s+", " ", val)
 
-            key = val.lower()  # 🔥 gabung disini
+            cleaned.append(val)
 
-            if key not in temp:
-                temp[key] = {
-                    "name": val,
-                    "count": 0
-                }
+        counter = Counter(cleaned)
 
-            temp[key]["count"] += 1
+        return sorted(counter.items(), key=lambda x: x[1], reverse=True)
 
-        result = []
-
-        for v in temp.values():
-            name = smart_title(v["name"])
-            count = v["count"]
-
-            result.append((name, count))
-
-        result.sort(key=lambda x: x[1], reverse=True)
-
-        return result
-
-    except Exception as e:
-        print("ERROR extract_tags:", e)
+    except:
         return []
-
-
-# 🔥 NAMA UTAMA
-def get_main_name(tags):
-    return tags[0][0] if tags else "-"
 
 
 # ================= CACHE =================
@@ -133,6 +115,7 @@ def set_cache(number, data):
 
 def remove_duplicate_history(user_id, number):
     raw = r.lrange(f"history:{user_id}", 0, -1)
+
     for item in raw:
         try:
             obj = json.loads(item)
@@ -165,23 +148,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     loading = await update.message.reply_text("🔎 Sedang mencari...")
 
+    # CACHE
     cached = get_cache(number)
 
     if cached:
         data = cached
     else:
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)  # delay aman
+
         data = await get_gcontact(number)
 
         if not data or not data.get("success"):
-            return await loading.edit_text("❌ API error / limit")
+            return await loading.edit_text(
+                "❌ API error / limit\nCoba lagi 5-10 detik lagi..."
+            )
 
         set_cache(number, data)
 
+    # PROSES
     tags = extract_tags(data)
-    name = get_main_name(tags)
+    name = tags[0][0] if tags else "-"
 
-    # 🔥 HISTORY FIX
+    # HISTORY (ANTI DUPLIKAT)
     if r:
         remove_duplicate_history(user_id, number)
 
@@ -219,7 +207,7 @@ async def send_page(update, context, edit_msg=None):
 
     text_tags = "\n".join(
         [
-            f"{i}. {t} >> <b>{c} Tag</b>"
+            f"{i}. {t.title()} >> <b>{c} Tag</b>"
             for i, (t, c) in enumerate(page_tags, start=start+1)
         ]
     ) if page_tags else "❌ Tidak ada data"
@@ -229,7 +217,7 @@ async def send_page(update, context, edit_msg=None):
     msg = f"""📱 {number}
 💬 https://wa.me/{number}
 
-👤 {html.escape(name)}
+👤 {html.escape(name.title())}
 📊 {len(tags)} tag
 📄 Page {page+1}/{total_page}
 
@@ -319,6 +307,9 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= INIT FIX =================
 
 async def init(app):
+    global session
+    session = aiohttp.ClientSession()
+
     await app.bot.delete_webhook(drop_pending_updates=True)
 
 
