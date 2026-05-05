@@ -24,6 +24,8 @@ print("REDIS:", REDIS_URL)
 
 logging.basicConfig(level=logging.INFO)
 
+r = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
+
 # ================= FUNCTION =================
 
 def format_number(text):
@@ -76,6 +78,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     number = format_number(text)
 
+    # simpan history (optional)
+    if r:
+        r.lpush(f"history:{update.effective_user.id}", number)
+
     tags = get_gcontact(number)
 
     if not tags:
@@ -104,9 +110,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("🚀 BOT RUNNING...")
-
-    # 🔥 penting: bersihin webhook & pending update
-    app.bot.delete_webhook(drop_pending_updates=True)
 
     app.run_polling()
 
