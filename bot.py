@@ -3,27 +3,26 @@ import os
 import re
 import requests
 import redis
+import html
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
     CallbackQueryHandler,
-    CommandHandler,
     ContextTypes,
     filters,
 )
 
-# ================= DEBUG =================
-print("BOT TOKEN:", os.getenv("BOT_TOKEN"))
-print("GC TOKEN:", os.getenv("GC_TOKEN"))
-print("REDIS:", os.getenv("REDIS_URL"))
-
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 GC_TOKEN = os.getenv("GC_TOKEN")
-
 REDIS_URL = os.getenv("REDIS_URL")
+
+print("BOT TOKEN:", TOKEN)
+print("GC TOKEN:", GC_TOKEN)
+print("REDIS:", REDIS_URL)
+
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
 
 logging.basicConfig(level=logging.INFO)
@@ -37,86 +36,49 @@ def format_number(text):
         number = "62" + number[1:]
     elif number.startswith("62"):
         pass
-    else:
+    elif number.startswith("8"):
         number = "62" + number
+    else:
+        return None
 
     return number
 
-
 def cek_wa(number):
     try:
-        res = requests.get(f"https://wa.me/{number}", timeout=5)
+        res = requests.get(f"https://wa.me/{number}")
         return res.status_code == 200
     except:
         return False
 
-
-def getcontact_api(number):
+def get_gc(number):
     try:
-        if not GC_TOKEN:
-            return ["❌ GC TOKEN belum diset"]
+        url = f"https://gcontact.id/api?token={GC_TOKEN}&nomor={number}"
+        res = requests.get(url).json()
 
-        # CACHE
-        if r:
-            cache = r.get(f"gc:{number}")
-            if cache:
-                return eval(cache)
-
-        url = "https://gcontact.id/api"
-        params = {
-            "token": GC_TOKEN,
-            "nomor": number
-        }
-
-        res = requests.get(url, params=params, timeout=10)
-        data = res.json()
-
-        print("API RESPONSE:", data)
-
-        if "data" not in data:
-            return ["Tidak ada data"]
-
-        result = []
-
-        for item in data["data"]:
-            if isinstance(item, dict):
-                result.append(item.get("name", str(item)))
-            else:
-                result.append(str(item))
-
-        # SAVE CACHE
-        if r:
-            r.setex(f"gc:{number}", 3600, str(result))
-
-        return result if result else ["Tidak ada tag"]
-
-    except Exception as e:
-        print("API ERROR:", e)
-        return ["Error API"]
-
+        if res.get("status") == True:
+            return res.get("data", [])
+        return []
+    except:
+        return []
 
 # ================= HANDLER =================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 Bot aktif!\n\nKirim nomor untuk cek:\nContoh: 08123456789"
-    )
-
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
+    if not re.search(r"\d{8,}", text):
+        return await update.message.reply_text("❌ Masukkan nomor yang valid")
+
     number = format_number(text)
 
-    # VALIDASI FIX
-    if len(number) < 10:
-        return await update.message.reply_text("❌ Nomor tidak valid")
+    if not number:
+        return await update.message.reply_text("❌ Format nomor tidak dikenali")
 
-    # HISTORY
+    # SAVE HISTORY
     if r:
         r.lpush(f"history:{update.effective_user.id}", number)
 
-    tags = getcontact_api(number)
+    tags = get_gc(number)
     wa_status = "✅ Aktif" if cek_wa(number) else "❌ Tidak aktif"
 
     context.user_data["tags"] = tags
@@ -126,32 +88,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_page(update, context)
 
-
 async def send_page(update, context):
     tags = context.user_data.get("tags", [])
     page = context.user_data.get("page", 0)
     number = context.user_data.get("number", "")
     wa_status = context.user_data.get("wa", "")
 
-    per_page = 85
+    per_page = 20
     start = page * per_page
     end = start + per_page
 
     page_tags = tags[start:end]
 
-    formatted_tags = []
-    for t in page_tags:
-        clean = re.sub(r"\((.*?)\)", r"*(\1)*", t)
-        formatted_tags.append(f"• {clean}")
-
-    text_tags = "\n".join(formatted_tags)
+    text_tags = "\n".join([f"• {html.escape(str(t))}" for t in page_tags])
 
     msg = f"""
-📱 *{number}*
+📱 <b>{number}</b>
 🌐 https://wa.me/{number}
 
 WhatsApp: {wa_status}
-Total Tag: *{len(tags)}*
+Total Tag: <b>{len(tags)}</b>
 
 {text_tags}
 """
@@ -169,16 +125,15 @@ Total Tag: *{len(tags)}*
     if update.callback_query:
         await update.callback_query.edit_message_text(
             msg,
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=reply_markup,
         )
     else:
         await update.message.reply_text(
             msg,
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=reply_markup,
         )
-
 
 async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -190,7 +145,6 @@ async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["page"] -= 1
 
     await send_page(update, context)
-
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not r:
@@ -204,24 +158,25 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join([f"• {x}" for x in data])
     await update.message.reply_text(f"📜 History:\n{msg}")
 
-
 # ================= MAIN =================
 
-def main():
-    if not TOKEN:
-        print("❌ BOT TOKEN BELUM DISET")
-        return
+import asyncio
 
+async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(pagination))
     app.add_handler(MessageHandler(filters.Regex("^/history$"), history))
 
     print("🚀 BOT RUNNING...")
-    app.run_polling()
 
+    await app.initialize()
+    await app.start()
+
+    await app.bot.delete_webhook(drop_pending_updates=True)
+
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
