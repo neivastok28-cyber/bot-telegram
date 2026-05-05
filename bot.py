@@ -48,7 +48,7 @@ def format_number(text):
     return None
 
 
-# 🔥 SUPER FAST + RETRY API
+# 🔥 SUPER FAST + RETRY API + VALIDASI
 async def get_gcontact(number):
     global session
 
@@ -59,7 +59,8 @@ async def get_gcontact(number):
             async with session.get(url, timeout=10) as res:
                 data = await res.json()
 
-                if data and data.get("success"):
+                # ✅ VALIDASI TAMBAHAN DI SINI
+                if data and data.get("success") and data.get("data"):
                     return data
 
         except Exception as e:
@@ -154,11 +155,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if cached:
         data = cached
     else:
-        await asyncio.sleep(2)  # delay aman
+        await asyncio.sleep(2)
 
         data = await get_gcontact(number)
 
-        if not data or not data.get("success"):
+        # ✅ TAMBAHAN VALIDASI DI SINI JUGA
+        if not data or not data.get("success") or not data.get("data"):
             return await loading.edit_text(
                 "❌ API error / limit\nCoba lagi 5-10 detik lagi..."
             )
@@ -212,7 +214,8 @@ async def send_page(update, context, edit_msg=None):
         ]
     ) if page_tags else "❌ Tidak ada data"
 
-    total_page = (len(tags) // per_page) + 1
+    import math
+    total_page = math.ceil(len(tags) / per_page)
 
     msg = f"""📱 {number}
 💬 https://wa.me/{number}
