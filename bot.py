@@ -4,11 +4,10 @@ import re
 import requests
 import redis
 import json
+import asyncio
 from collections import Counter
 from io import BytesIO
 from openpyxl import Workbook
-import time
-import asyncio
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -83,11 +82,9 @@ def get_cache(number):
 def set_cache(number, data):
     if not r:
         return
+    r.setex(f"cache:{number}", 86400, json.dumps(data))  # 1 hari
 
-    # 1 hari
-    r.setex(f"cache:{number}", 86400, json.dumps(data))
-
-# ================= HISTORY CHECK =================
+# ================= HISTORY =================
 
 def check_history(user_id, number):
     if not r:
@@ -114,7 +111,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📥 /export export excel"
     )
 
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     print("DAPAT PESAN:", text)
@@ -126,7 +122,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     pernah = check_history(user_id, number)
 
-    # 🔎 LOADING
+    # 🔎 LOADING MESSAGE
     loading = await update.message.reply_text("🔎 Sedang mencari data...")
 
     # ================= CACHE =================
@@ -137,12 +133,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = cached
     else:
         print("HIT API")
-        await asyncio.sleep(1)  # 🔥 FIX (jangan pakai time.sleep)
+        await asyncio.sleep(1)  # anti spam API
         data = get_gcontact(number)
 
         if not data or not data.get("success"):
-            await loading.edit_text("❌ API error / limit")
-            return
+            return await loading.edit_text("❌ API error / limit")
 
         set_cache(number, data)
 
@@ -154,7 +149,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     name = tags[0][0] if tags else "-"
 
-    # ================= SIMPAN HISTORY =================
+    # ================= SAVE HISTORY =================
     if r:
         history_data = {
             "number": number,
@@ -162,8 +157,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "tags": tags
         }
         r.lpush(f"history:{user_id}", json.dumps(history_data))
-        r.ltrim(f"history:{user_id}", 0, 999)  # 🔥 batasi 1000 data
 
+    # ================= SAVE CONTEXT =================
     context.user_data["tags"] = tags
     context.user_data["page"] = 0
     context.user_data["number"] = number
@@ -173,7 +168,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_page(update, context, edit_msg=loading)
 
-# ================= PAGINATION =================
+# ================= PAGINATION TAG =================
 
 async def send_page(update, context, edit_msg=None):
     tags = context.user_data.get("tags", [])
@@ -225,7 +220,6 @@ async def send_page(update, context, edit_msg=None):
     else:
         await update.message.reply_text(msg, reply_markup=reply_markup)
 
-
 async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -242,7 +236,6 @@ async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["history_page"] = 0
     await send_history(update, context)
-
 
 async def send_history(update, context):
     user_id = update.effective_user.id
@@ -279,7 +272,6 @@ async def send_history(update, context):
     else:
         await update.message.reply_text(msg, reply_markup=reply_markup)
 
-
 async def history_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -311,7 +303,6 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             total = len(tags)
             tag_text = ", ".join([f"{t} ({c})" for t, c in tags[:50]])
-
         except:
             number = item
             name = "-"
@@ -331,11 +322,8 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= MAIN =================
 
-async def main():
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
-
-    # 🔥 FIX WAJIB (anti 409 conflict)
-    await app.bot.delete_webhook(drop_pending_updates=True)
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("history", history))
@@ -346,8 +334,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(history_pagination, pattern="^(h_next|h_prev)$"))
 
     print("🚀 BOT RUNNING...")
-    await app.run_polling()
-
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
