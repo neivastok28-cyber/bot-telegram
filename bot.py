@@ -26,12 +26,12 @@ from telegram.ext import (
 TOKEN = os.getenv("BOT_TOKEN")
 GC_TOKEN = os.getenv("API_TOKEN")
 REDIS_URL = os.getenv("REDIS_URL")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
 
 logging.basicConfig(level=logging.INFO)
 
-# ================= GLOBAL SESSION =================
 session = None
 
 
@@ -47,6 +47,34 @@ def format_number(text):
         return number
 
     return None
+
+
+# ================= QUOTA =================
+
+def get_quota(user_id):
+    return int(r.get(f"quota:{user_id}") or 0) if r else 0
+
+
+def set_quota(user_id, amount):
+    if r:
+        r.set(f"quota:{user_id}", amount)
+
+
+def add_quota(user_id, amount):
+    if r:
+        r.incrby(f"quota:{user_id}", amount)
+
+
+def use_quota(user_id):
+    if not r:
+        return True
+
+    quota = get_quota(user_id)
+    if quota <= 0:
+        return False
+
+    r.decr(f"quota:{user_id}")
+    return True
 
 
 # ================= API =================
@@ -69,7 +97,6 @@ async def get_gcontact(number):
 
                 tags = data.get("data", {}).get("getcontact", {}).get("tags")
 
-                # VALIDASI UTAMA
                 if data.get("success") and tags:
                     return data
 
@@ -122,7 +149,7 @@ def get_cache(number):
 def set_cache(number, data):
     if not r:
         return
-    r.setex(f"cache:{number}", 21600, json.dumps(data))  # 6 jam
+    r.setex(f"cache:{number}", 21600, json.dumps(data))
 
 
 # ================= HISTORY =================
@@ -145,6 +172,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✅ Bot aktif!\n\n"
         "📱 Kirim nomor untuk cek\n"
+        "🎟 /quota\n"
         "📜 /history\n"
         "📥 /export\n"
         "🗑 /clear"
@@ -152,24 +180,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    # 🔥 CEK QUOTA
+    if not use_quota(user_id):
+        return await update.message.reply_text("❌ Quota habis")
+
     text = update.message.text
 
     number = format_number(text)
     if not number:
         return await update.message.reply_text("❌ Nomor tidak valid")
 
-    user_id = update.effective_user.id
-
     loading = await update.message.reply_text("🔎 Sedang mencari...")
 
-    # CACHE
     cached = get_cache(number)
 
     if cached:
         data = cached
     else:
         await asyncio.sleep(1)
-
         data = await get_gcontact(number)
 
         if not data:
@@ -177,11 +207,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         set_cache(number, data)
 
-    # PROSES
-    tags = extract_tags(data) if data else []
+    tags = extract_tags(data)
     name = tags[0][0] if tags else "-"
 
-    # HISTORY
     if r:
         remove_duplicate_history(user_id, number)
 
@@ -248,8 +276,6 @@ async def send_page(update, context, edit_msg=None):
         await edit_msg.edit_text(msg, reply_markup=reply_markup, parse_mode="HTML")
     elif update.callback_query:
         await update.callback_query.edit_message_text(msg, reply_markup=reply_markup, parse_mode="HTML")
-    else:
-        await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode="HTML")
 
 
 async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -267,54 +293,66 @@ async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= HISTORY =================
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    raw = r.lrange(f"history:{user_id}", 0, 50)
-
-    data = []
-    for item in raw:
-        try:
-            obj = json.loads(item)
-            data.append(obj["number"])
-        except:
-            pass
-
-    text = "\n".join([f"{i+1}. {x}" for i, x in enumerate(data)])
-
+    raw = r.lrange(f"history:{update.effective_user.id}", 0, 50)
+    text = "\n".join([f"{i+1}. {json.loads(x)['number']}" for i, x in enumerate(raw)])
     await update.message.reply_text(f"📜 History:\n\n{text}")
-
-
-# ================= CLEAR =================
-
-async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if r:
-        r.delete(f"history:{user_id}")
-    await update.message.reply_text("🗑 History berhasil dihapus")
 
 
 # ================= EXPORT =================
 
 async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    raw = r.lrange(f"history:{user_id}", 0, 9999)
+    raw = r.lrange(f"history:{update.effective_user.id}", 0, 9999)
 
     wb = Workbook()
     ws = wb.active
-
     ws.append(["No", "Nomor", "Nama", "Total Tag"])
 
     for i, item in enumerate(raw, start=1):
-        try:
-            obj = json.loads(item)
-            ws.append([i, obj["number"], obj["name"], len(obj["tags"])])
-        except:
-            pass
+        obj = json.loads(item)
+        ws.append([i, obj["number"], obj["name"], len(obj["tags"])])
 
-    file_stream = BytesIO()
-    wb.save(file_stream)
-    file_stream.seek(0)
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
 
-    await update.message.reply_document(file_stream, filename="history.xlsx")
+    await update.message.reply_document(bio, filename="history.xlsx")
+
+
+# ================= CLEAR =================
+
+async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if r:
+        r.delete(f"history:{update.effective_user.id}")
+    await update.message.reply_text("🗑 History berhasil dihapus")
+
+
+# ================= ADMIN =================
+
+async def addquota(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    user_id = int(context.args[0])
+    amount = int(context.args[1])
+    add_quota(user_id, amount)
+
+    await update.message.reply_text("✅ quota ditambah")
+
+
+async def setquota(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    user_id = int(context.args[0])
+    amount = int(context.args[1])
+    set_quota(user_id, amount)
+
+    await update.message.reply_text("✅ quota diset")
+
+
+async def quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = get_quota(update.effective_user.id)
+    await update.message.reply_text(f"🎟 Sisa quota: {q}")
 
 
 # ================= INIT =================
@@ -334,11 +372,15 @@ def main():
     app.add_handler(CommandHandler("history", history))
     app.add_handler(CommandHandler("export", export_history))
     app.add_handler(CommandHandler("clear", clear_history))
+    app.add_handler(CommandHandler("quota", quota))
+
+    app.add_handler(CommandHandler("addquota", addquota))
+    app.add_handler(CommandHandler("setquota", setquota))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(pagination, pattern="^(next|prev)$"))
 
-    print("🚀 BOT RUNNING...")
+    print("🚀 BOT RUNNING + QUOTA")
     app.run_polling()
 
 
