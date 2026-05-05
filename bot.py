@@ -52,9 +52,7 @@ def main_menu(user_id):
 
 
 def back_button(user_id):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⬅️ Kembali", callback_data="back")]
-    ])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Kembali", callback_data="back")]])
 
 
 # ================= HELPER =================
@@ -108,7 +106,9 @@ async def get_gcontact(number):
     for _ in range(3):
         try:
             async with session.get(url, timeout=10) as res:
-                data = await res.json()
+                text = await res.text()
+                data = json.loads(text)
+
                 tags = data.get("data", {}).get("getcontact", {}).get("tags")
 
                 if data.get("success") and tags:
@@ -130,7 +130,9 @@ def extract_tags(data):
         for t in tags_raw:
             val = t.get("value")
             if val:
-                cleaned.append(val.strip().lower())
+                val = val.strip().lower()
+                val = re.sub(r"\s+", " ", val)
+                cleaned.append(val)
 
         return sorted(Counter(cleaned).items(), key=lambda x: x[1], reverse=True)
     except:
@@ -164,30 +166,24 @@ def remove_duplicate_history(user_id, number):
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 MENU UTAMA",
-        reply_markup=main_menu(update.effective_user.id)
-    )
+    await update.message.reply_text("🤖 MENU UTAMA", reply_markup=main_menu(update.effective_user.id))
 
 
 # ================= MENU =================
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-
     user_id = update.effective_user.id
 
     if q.data == "back":
         return await q.edit_message_text("🤖 MENU UTAMA", reply_markup=main_menu(user_id))
 
-    # PROFILE
     if q.data == "profile":
         return await q.edit_message_text(
             f"👤 PROFILE\n\n🆔 {user_id}\n🎟 {get_quota(user_id)}\n📊 {get_usage(user_id)}",
             reply_markup=back_button(user_id)
         )
 
-    # DASHBOARD
     if q.data == "dashboard":
         total_users = len(r.keys("quota:*")) if r else 0
         total_usage = sum([int(r.get(k)) for k in r.keys("usage:*")]) if r else 0
@@ -197,28 +193,23 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_button(user_id)
         )
 
-    # HISTORY
     if q.data == "history":
         raw = r.lrange(f"history:{user_id}", 0, 10)
         text = "\n".join([json.loads(x)["number"] for x in raw]) or "-"
-        return await q.edit_message_text(f"📜\n{text}", reply_markup=back_button(user_id))
+        return await q.edit_message_text(text, reply_markup=back_button(user_id))
 
-    # EXPORT
     if q.data == "export":
         return await export_history(update, context)
 
-    # CLEAR
     if q.data == "clear":
         r.delete(f"history:{user_id}")
         return await q.edit_message_text("🗑 Cleared", reply_markup=back_button(user_id))
 
-    # ADMIN
     if q.data == "admin":
         return await q.edit_message_text("⚙️ /setquota /addquota", reply_markup=back_button(user_id))
 
-    # CHECK
     if q.data == "check":
-        return await q.edit_message_text("📱 Kirim nomor")
+        return await q.edit_message_text("📱 Kirim nomor untuk cek")
 
 
 # ================= HANDLE =================
@@ -230,7 +221,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     number = format_number(update.message.text)
     if not number:
-        return await update.message.reply_text("❌ nomor salah")
+        return await update.message.reply_text("❌ nomor tidak valid")
 
     loading = await update.message.reply_text("🔎 mencari...")
 
@@ -246,10 +237,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_usage(user_id)
 
     tags = extract_tags(data)
+    name = tags[0][0] if tags else "-"
+
+    if r:
+        remove_duplicate_history(user_id, number)
+        r.lpush(f"history:{user_id}", json.dumps({
+            "number": number,
+            "name": name,
+            "tags": tags
+        }))
 
     context.user_data.update({
         "tags": tags,
-        "page": 0
+        "page": 0,
+        "number": number,
+        "name": name
     })
 
     await send_page(update, context, loading)
@@ -257,27 +259,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= PAGINATION =================
 async def send_page(update, context, msg_obj):
+    user_id = update.effective_user.id
+
     tags = context.user_data["tags"]
     page = context.user_data["page"]
+    number = context.user_data["number"]
+    name = context.user_data["name"]
 
-    per_page = 20
+    per_page = 85
     start = page * per_page
     end = start + per_page
 
     page_tags = tags[start:end]
 
-    text = "\n".join([f"{i}. {t} ({c})"
-                      for i, (t, c) in enumerate(page_tags, start=start+1)])
+    text_tags = "\n".join([
+        f"{i}. {t.title()} >> <b>{c} Tag</b>"
+        for i, (t, c) in enumerate(page_tags, start=start+1)
+    ]) if page_tags else "❌ Tidak ada data"
+
+    total_page = math.ceil(len(tags) / per_page) if tags else 1
+
+    msg = f"""📱 {number}
+💬 https://wa.me/{number}
+
+👤 {html.escape(name.title())}
+📊 {len(tags)} tag
+🎟 Sisa Quota: {get_quota(user_id)}
+
+📄 Page {page+1}/{total_page}
+
+🏷 Semua Tag:
+
+{text_tags}
+"""
 
     buttons = []
     if start > 0:
-        buttons.append(InlineKeyboardButton("⬅️", callback_data="prev"))
+        buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data="prev"))
     if end < len(tags):
-        buttons.append(InlineKeyboardButton("➡️", callback_data="next"))
+        buttons.append(InlineKeyboardButton("Next ➡️", callback_data="next"))
 
     markup = InlineKeyboardMarkup([buttons]) if buttons else None
 
-    await msg_obj.edit_text(text or "❌ kosong", reply_markup=markup)
+    await msg_obj.edit_text(msg, reply_markup=markup, parse_mode="HTML")
 
 
 async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -295,8 +319,9 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     wb = Workbook()
     ws = wb.active
+    ws.append(["No", "Nomor", "Nama", "Total Tag"])
 
-    for i, item in enumerate(raw, 1):
+    for i, item in enumerate(raw, start=1):
         obj = json.loads(item)
         ws.append([i, obj["number"], obj["name"], len(obj["tags"])])
 
@@ -312,20 +337,21 @@ async def addquota(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     add_quota(int(context.args[0]), int(context.args[1]))
-    await update.message.reply_text("ok")
+    await update.message.reply_text("✅ quota ditambah")
 
 
 async def setquota(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     set_quota(int(context.args[0]), int(context.args[1]))
-    await update.message.reply_text("ok")
+    await update.message.reply_text("✅ quota diset")
 
 
 # ================= INIT =================
 async def init(app):
     global session
     session = aiohttp.ClientSession()
+    await app.bot.delete_webhook(drop_pending_updates=True)
 
 
 # ================= MAIN =================
@@ -341,6 +367,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+    print("🚀 BOT FULL FINAL RUNNING")
     app.run_polling()
 
 
