@@ -171,18 +171,46 @@ def remove_duplicate_history(user_id, number):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✅ Bot aktif!\n\n"
-        "📱 Kirim nomor untuk cek\n"
-        "🎟 /quota\n"
+        "📱 Kirim nomor untuk cek\n\n"
+
+        "👤 USER:\n"
+        "/quota - cek sisa quota\n\n"
+
+        "🔥 ADMIN:\n"
+        "/setquota <user_id> <jumlah>\n"
+        "/addquota <user_id> <jumlah>\n\n"
+
+        "Contoh:\n"
+        "/setquota 123456789 50\n"
+        "/addquota 123456789 20\n\n"
+
         "📜 /history\n"
         "📥 /export\n"
-        "🗑 /clear"
+        "🗑 /clear\n"
+        "📖 /help"
+    )
+
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📖 CARA PAKAI BOT\n\n"
+
+        "👤 USER:\n"
+        "/quota - cek sisa quota\n\n"
+
+        "🔥 ADMIN:\n"
+        "/setquota <user_id> <jumlah>\n"
+        "/addquota <user_id> <jumlah>\n\n"
+
+        "Contoh:\n"
+        "/setquota 123456789 50\n"
+        "/addquota 123456789 20"
     )
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # 🔥 CEK QUOTA
     if not use_quota(user_id):
         return await update.message.reply_text("❌ Quota habis")
 
@@ -369,6 +397,7 @@ def main():
     app = ApplicationBuilder().token(TOKEN).post_init(init).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("history", history))
     app.add_handler(CommandHandler("export", export_history))
     app.add_handler(CommandHandler("clear", clear_history))
@@ -380,7 +409,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(pagination, pattern="^(next|prev)$"))
 
-    print("🚀 BOT RUNNING + QUOTA")
+    print("🚀 BOT RUNNING + QUOTA + GUIDE")
     app.run_polling()
 
 
