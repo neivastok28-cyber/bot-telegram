@@ -8,6 +8,7 @@ from collections import Counter
 from io import BytesIO
 from openpyxl import Workbook
 import time
+import asyncio
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -64,7 +65,6 @@ def extract_tags(data):
     except:
         return []
 
-
 # ================= CACHE =================
 
 def get_cache(number):
@@ -87,7 +87,6 @@ def set_cache(number, data):
     # 1 hari
     r.setex(f"cache:{number}", 86400, json.dumps(data))
 
-
 # ================= HISTORY CHECK =================
 
 def check_history(user_id, number):
@@ -104,7 +103,6 @@ def check_history(user_id, number):
             if item == number:
                 return True
     return False
-
 
 # ================= HANDLER =================
 
@@ -139,7 +137,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = cached
     else:
         print("HIT API")
-        time.sleep(1)  # anti spam API
+        await asyncio.sleep(1)  # 🔥 FIX (jangan pakai time.sleep)
         data = get_gcontact(number)
 
         if not data or not data.get("success"):
@@ -164,6 +162,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "tags": tags
         }
         r.lpush(f"history:{user_id}", json.dumps(history_data))
+        r.ltrim(f"history:{user_id}", 0, 999)  # 🔥 batasi 1000 data
 
     context.user_data["tags"] = tags
     context.user_data["page"] = 0
@@ -174,8 +173,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_page(update, context, edit_msg=loading)
 
-
-# ================= PAGINATION TAG =================
+# ================= PAGINATION =================
 
 async def send_page(update, context, edit_msg=None):
     tags = context.user_data.get("tags", [])
@@ -239,7 +237,6 @@ async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_page(update, context)
 
-
 # ================= HISTORY =================
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -294,7 +291,6 @@ async def history_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await send_history(update, context)
 
-
 # ================= EXPORT =================
 
 async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -333,11 +329,13 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filename="history.xlsx"
     )
 
-
 # ================= MAIN =================
 
-def main():
+async def main():
     app = ApplicationBuilder().token(TOKEN).build()
+
+    # 🔥 FIX WAJIB (anti 409 conflict)
+    await app.bot.delete_webhook(drop_pending_updates=True)
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("history", history))
@@ -348,8 +346,8 @@ def main():
     app.add_handler(CallbackQueryHandler(history_pagination, pattern="^(h_next|h_prev)$"))
 
     print("🚀 BOT RUNNING...")
-    app.run_polling()
+    await app.run_polling()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
