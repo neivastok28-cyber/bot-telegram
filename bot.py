@@ -1,13 +1,14 @@
 import logging
 import os
 import re
-import requests
-import redis
 import json
 import asyncio
 import html
 from collections import Counter
 from io import BytesIO
+
+import aiohttp
+import redis
 from openpyxl import Workbook
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -43,15 +44,18 @@ def format_number(text):
     return None
 
 
-def get_gcontact(number):
+# 🔥 ASYNC API (SUPER CEPAT)
+async def get_gcontact(number):
     try:
         url = f"https://gcontact.id/api?token={GC_TOKEN}&nomor={number}"
-        return requests.get(url, timeout=10).json()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as res:
+                return await res.json()
     except:
         return {}
 
 
-# 🔥 TAG DIGABUNG + NORMALISASI (INI KUNCI)
+# 🔥 NORMALISASI + GABUNG TAG
 def extract_tags(data):
     try:
         tags_raw = data.get("data", {}).get("getcontact", {}).get("tags", [])
@@ -72,8 +76,7 @@ def extract_tags(data):
 
         return sorted(counter.items(), key=lambda x: x[1], reverse=True)
 
-    except Exception as e:
-        print("ERROR extract_tags:", e)
+    except:
         return []
 
 
@@ -84,12 +87,7 @@ def get_cache(number):
         return None
 
     data = r.get(f"cache:{number}")
-    if data:
-        try:
-            return json.loads(data)
-        except:
-            return None
-    return None
+    return json.loads(data) if data else None
 
 
 def set_cache(number, data):
@@ -100,20 +98,15 @@ def set_cache(number, data):
 
 # ================= HISTORY =================
 
-def check_history(user_id, number):
-    if not r:
-        return False
-
-    raw = r.lrange(f"history:{user_id}", 0, 999)
+def remove_duplicate_history(user_id, number):
+    raw = r.lrange(f"history:{user_id}", 0, -1)
     for item in raw:
         try:
             obj = json.loads(item)
             if obj.get("number") == number:
-                return True
+                r.lrem(f"history:{user_id}", 0, item)
         except:
-            if item == number:
-                return True
-    return False
+            pass
 
 
 # ================= HANDLER =================
@@ -122,8 +115,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✅ Bot aktif!\n\n"
         "📱 Kirim nomor untuk cek\n"
-        "📜 /history lihat riwayat\n"
-        "📥 /export export excel"
+        "📜 /history\n"
+        "📥 /export\n"
+        "🗑 /clear"
     )
 
 
@@ -135,10 +129,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("❌ Nomor tidak valid")
 
     user_id = update.effective_user.id
-    pernah = check_history(user_id, number)
 
-    # 🔎 LOADING
-    loading = await update.message.reply_text("🔎 Sedang mencari data...")
+    loading = await update.message.reply_text("🔎 Sedang mencari...")
 
     # CACHE
     cached = get_cache(number)
@@ -147,7 +139,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = cached
     else:
         await asyncio.sleep(1)
-        data = get_gcontact(number)
+        data = await get_gcontact(number)
 
         if not data or not data.get("success"):
             return await loading.edit_text("❌ API error / limit")
@@ -156,24 +148,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # PROSES
     tags = extract_tags(data)
-
     name = tags[0][0] if tags else "-"
 
-    # SAVE HISTORY
+    # AUTO REMOVE DUPLICATE HISTORY
     if r:
+        remove_duplicate_history(user_id, number)
+
         history_data = {
             "number": number,
             "name": name,
             "tags": tags
         }
+
         r.lpush(f"history:{user_id}", json.dumps(history_data))
 
     context.user_data.update({
         "tags": tags,
         "page": 0,
         "number": number,
-        "name": name,
-        "pernah": pernah
+        "name": name
     })
 
     await send_page(update, context, edit_msg=loading)
@@ -186,7 +179,6 @@ async def send_page(update, context, edit_msg=None):
     page = context.user_data.get("page", 0)
     number = context.user_data.get("number", "")
     name = context.user_data.get("name", "-")
-    pernah = context.user_data.get("pernah", False)
 
     per_page = 85
     start = page * per_page
@@ -194,22 +186,18 @@ async def send_page(update, context, edit_msg=None):
 
     page_tags = tags[start:end]
 
-    if not page_tags:
-        text_tags = "❌ Tidak ada data"
-    else:
-        text_tags = "\n".join(
-            [
-                f"{i}. {t.title()} >> <b>{c} Tag</b>"
-                for i, (t, c) in enumerate(page_tags, start=start+1)
-            ]
-        )
+    text_tags = "\n".join(
+        [
+            f"{i}. {t.title()} >> <b>{c} Tag</b>"
+            for i, (t, c) in enumerate(page_tags, start=start+1)
+        ]
+    ) if page_tags else "❌ Tidak ada data"
 
     total_page = (len(tags) // per_page) + 1
-    history_text = "🕘 Pernah dicari sebelumnya\n" if pernah else ""
 
     msg = f"""📱 {number}
 💬 https://wa.me/{number}
-{history_text}
+
 👤 {html.escape(name.title())}
 📊 {len(tags)} tag
 📄 Page {page+1}/{total_page}
@@ -239,7 +227,7 @@ async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "next":
         context.user_data["page"] += 1
-    elif query.data == "prev":
+    else:
         context.user_data["page"] -= 1
 
     await send_page(update, context)
@@ -248,13 +236,8 @@ async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= HISTORY =================
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["history_page"] = 0
-    await send_history(update, context)
-
-
-async def send_history(update, context):
     user_id = update.effective_user.id
-    raw = r.lrange(f"history:{user_id}", 0, 999)
+    raw = r.lrange(f"history:{user_id}", 0, 50)
 
     data = []
     for item in raw:
@@ -262,42 +245,19 @@ async def send_history(update, context):
             obj = json.loads(item)
             data.append(obj["number"])
         except:
-            data.append(item)
+            pass
 
-    page = context.user_data.get("history_page", 0)
-    per_page = 20
-    start = page * per_page
-    end = start + per_page
+    text = "\n".join([f"{i+1}. {x}" for i, x in enumerate(data)])
 
-    page_data = data[start:end]
-    text = "\n".join([f"{i+1}. {x}" for i, x in enumerate(page_data, start=start)])
-
-    msg = f"📜 History Page {page+1}\n\n{text}"
-
-    buttons = []
-    if start > 0:
-        buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data="h_prev"))
-    if end < len(data):
-        buttons.append(InlineKeyboardButton("Next ➡️", callback_data="h_next"))
-
-    reply_markup = InlineKeyboardMarkup([buttons]) if buttons else None
-
-    if update.callback_query:
-        await update.callback_query.edit_message_text(msg, reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(msg, reply_markup=reply_markup)
+    await update.message.reply_text(f"📜 History:\n\n{text}")
 
 
-async def history_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+# ================= CLEAR =================
 
-    if query.data == "h_next":
-        context.user_data["history_page"] += 1
-    elif query.data == "h_prev":
-        context.user_data["history_page"] -= 1
-
-    await send_history(update, context)
+async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    r.delete(f"history:{user_id}")
+    await update.message.reply_text("🗑 History berhasil dihapus")
 
 
 # ================= EXPORT =================
@@ -309,52 +269,40 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wb = Workbook()
     ws = wb.active
 
-    ws.append(["No", "Nomor", "Nama", "Total Tag", "Tags"])
+    ws.append(["No", "Nomor", "Nama", "Total Tag"])
 
     for i, item in enumerate(raw, start=1):
         try:
             obj = json.loads(item)
-            number = obj["number"]
-            name = obj["name"]
-            tags = obj["tags"]
-
-            total = len(tags)
-            tag_text = ", ".join([f"{t} ({c})" for t, c in tags[:50]])
+            ws.append([i, obj["number"], obj["name"], len(obj["tags"])])
         except:
-            number = item
-            name = "-"
-            total = 0
-            tag_text = "-"
-
-        ws.append([i, number, name, total, tag_text])
+            pass
 
     file_stream = BytesIO()
     wb.save(file_stream)
     file_stream.seek(0)
 
-    await update.message.reply_document(
-        document=file_stream,
-        filename="history.xlsx"
-    )
+    await update.message.reply_document(file_stream, filename="history.xlsx")
+
+
+# ================= INIT FIX (PENTING) =================
+
+async def init(app):
+    await app.bot.delete_webhook(drop_pending_updates=True)
 
 
 # ================= MAIN =================
 
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    async def init():
-        await app.bot.delete_webhook(drop_pending_updates=True)
-
-    app.post_init = init
+    app = ApplicationBuilder().token(TOKEN).post_init(init).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("history", history))
     app.add_handler(CommandHandler("export", export_history))
+    app.add_handler(CommandHandler("clear", clear_history))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(pagination, pattern="^(next|prev)$"))
-    app.add_handler(CallbackQueryHandler(history_pagination, pattern="^(h_next|h_prev)$"))
 
     print("🚀 BOT RUNNING...")
     app.run_polling()
