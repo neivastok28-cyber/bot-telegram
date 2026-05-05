@@ -49,7 +49,8 @@ def format_number(text):
     return None
 
 
-# 🔥 API REQUEST + VALIDASI TAG
+# ================= API =================
+
 async def get_gcontact(number):
     global session
 
@@ -60,8 +61,6 @@ async def get_gcontact(number):
             async with session.get(url, timeout=10) as res:
                 text = await res.text()
 
-                print("RAW:", text[:200])  # debug
-
                 try:
                     data = json.loads(text)
                 except:
@@ -70,11 +69,11 @@ async def get_gcontact(number):
 
                 tags = data.get("data", {}).get("getcontact", {}).get("tags")
 
-                # ✅ VALIDASI FINAL
+                # VALIDASI UTAMA
                 if data.get("success") and tags:
                     return data
 
-                print("❌ INVALID / NO TAGS:", data)
+                print("❌ INVALID / NO TAGS")
 
         except Exception as e:
             print("RETRY ERROR:", e)
@@ -84,7 +83,8 @@ async def get_gcontact(number):
     return {}
 
 
-# 🔥 NORMALISASI TAG
+# ================= TAG PROCESS =================
+
 def extract_tags(data):
     try:
         tags_raw = data.get("data", {}).get("getcontact", {}).get("tags", [])
@@ -167,17 +167,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if cached:
         data = cached
-        print("⚡ CACHE HIT")
     else:
         await asyncio.sleep(1)
 
         data = await get_gcontact(number)
 
         if not data:
-            return await loading.edit_text(
-                "❌ Data tidak ditemukan / quota habis\n\n"
-                "💡 Coba nomor lain atau tunggu beberapa saat"
-            )
+            return await loading.edit_text("❌ Data tidak ditemukan")
 
         set_cache(number, data)
 
