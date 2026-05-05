@@ -4,6 +4,7 @@ import re
 import json
 import asyncio
 import html
+import math
 from collections import Counter
 from io import BytesIO
 
@@ -48,30 +49,42 @@ def format_number(text):
     return None
 
 
-# 🔥 SUPER FAST + RETRY API + VALIDASI
+# 🔥 API REQUEST + VALIDASI TAG
 async def get_gcontact(number):
     global session
 
     url = f"https://gcontact.id/api?token={GC_TOKEN}&nomor={number}"
 
-    for i in range(3):  # retry 3x
+    for i in range(3):
         try:
             async with session.get(url, timeout=10) as res:
-                data = await res.json()
+                text = await res.text()
 
-                # ✅ VALIDASI TAMBAHAN DI SINI
-                if data and data.get("success") and data.get("data"):
+                print("RAW:", text[:200])  # debug
+
+                try:
+                    data = json.loads(text)
+                except:
+                    print("❌ BUKAN JSON")
+                    return {}
+
+                tags = data.get("data", {}).get("getcontact", {}).get("tags")
+
+                # ✅ VALIDASI FINAL
+                if data.get("success") and tags:
                     return data
 
+                print("❌ INVALID / NO TAGS:", data)
+
         except Exception as e:
-            print("RETRY:", e)
+            print("RETRY ERROR:", e)
 
         await asyncio.sleep(2)
 
     return {}
 
 
-# 🔥 NORMALISASI + GABUNG TAG
+# 🔥 NORMALISASI TAG
 def extract_tags(data):
     try:
         tags_raw = data.get("data", {}).get("getcontact", {}).get("tags", [])
@@ -109,7 +122,7 @@ def get_cache(number):
 def set_cache(number, data):
     if not r:
         return
-    r.setex(f"cache:{number}", 86400, json.dumps(data))
+    r.setex(f"cache:{number}", 21600, json.dumps(data))  # 6 jam
 
 
 # ================= HISTORY =================
@@ -154,24 +167,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if cached:
         data = cached
+        print("⚡ CACHE HIT")
     else:
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
 
         data = await get_gcontact(number)
 
-        # ✅ TAMBAHAN VALIDASI DI SINI JUGA
-        if not data or not data.get("success") or not data.get("data"):
+        if not data:
             return await loading.edit_text(
-                "❌ API error / limit\nCoba lagi 5-10 detik lagi..."
+                "❌ Data tidak ditemukan / quota habis\n\n"
+                "💡 Coba nomor lain atau tunggu beberapa saat"
             )
 
         set_cache(number, data)
 
     # PROSES
-    tags = extract_tags(data)
+    tags = extract_tags(data) if data else []
     name = tags[0][0] if tags else "-"
 
-    # HISTORY (ANTI DUPLIKAT)
+    # HISTORY
     if r:
         remove_duplicate_history(user_id, number)
 
@@ -214,8 +228,7 @@ async def send_page(update, context, edit_msg=None):
         ]
     ) if page_tags else "❌ Tidak ada data"
 
-    import math
-    total_page = math.ceil(len(tags) / per_page)
+    total_page = math.ceil(len(tags) / per_page) if tags else 1
 
     msg = f"""📱 {number}
 💬 https://wa.me/{number}
@@ -278,7 +291,8 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    r.delete(f"history:{user_id}")
+    if r:
+        r.delete(f"history:{user_id}")
     await update.message.reply_text("🗑 History berhasil dihapus")
 
 
@@ -307,12 +321,11 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_document(file_stream, filename="history.xlsx")
 
 
-# ================= INIT FIX =================
+# ================= INIT =================
 
 async def init(app):
     global session
     session = aiohttp.ClientSession()
-
     await app.bot.delete_webhook(drop_pending_updates=True)
 
 
