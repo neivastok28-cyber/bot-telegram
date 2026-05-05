@@ -25,10 +25,6 @@ TOKEN = os.getenv("BOT_TOKEN")
 GC_TOKEN = os.getenv("API_TOKEN")
 REDIS_URL = os.getenv("REDIS_URL")
 
-print("BOT TOKEN:", TOKEN)
-print("GC TOKEN:", GC_TOKEN)
-print("REDIS:", REDIS_URL)
-
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
 
 logging.basicConfig(level=logging.INFO)
@@ -55,21 +51,31 @@ def get_gcontact(number):
         return {}
 
 
+# 🔥 TAG DIGABUNG + NORMALISASI (INI KUNCI)
 def extract_tags(data):
     try:
         tags_raw = data.get("data", {}).get("getcontact", {}).get("tags", [])
 
-        # lowercase biar exact match bersih
-        tags = [t.get("value").strip().lower() for t in tags_raw if t.get("value")]
+        cleaned = []
 
-        counter = Counter(tags)
+        for t in tags_raw:
+            val = t.get("value")
+            if not val:
+                continue
 
-        # urut dari terbesar
+            val = val.strip().lower()
+            val = re.sub(r"\s+", " ", val)
+
+            cleaned.append(val)
+
+        counter = Counter(cleaned)
+
         return sorted(counter.items(), key=lambda x: x[1], reverse=True)
 
     except Exception as e:
         print("ERROR extract_tags:", e)
         return []
+
 
 # ================= CACHE =================
 
@@ -89,8 +95,8 @@ def get_cache(number):
 def set_cache(number, data):
     if not r:
         return
+    r.setex(f"cache:{number}", 86400, json.dumps(data))
 
-    r.setex(f"cache:{number}", 86400, json.dumps(data))  # 1 hari
 
 # ================= HISTORY =================
 
@@ -109,6 +115,7 @@ def check_history(user_id, number):
                 return True
     return False
 
+
 # ================= HANDLER =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,7 +129,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    print("DAPAT PESAN:", text)
 
     number = format_number(text)
     if not number:
@@ -134,14 +140,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 🔎 LOADING
     loading = await update.message.reply_text("🔎 Sedang mencari data...")
 
-    # ================= CACHE =================
+    # CACHE
     cached = get_cache(number)
 
     if cached:
-        print("AMBIL DARI CACHE")
         data = cached
     else:
-        print("HIT API")
         await asyncio.sleep(1)
         data = get_gcontact(number)
 
@@ -150,15 +154,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         set_cache(number, data)
 
-    # ================= PROSES =================
+    # PROSES
     tags = extract_tags(data)
-
-    wa = data.get("data", {}).get("whatsapp", {}).get("exist", False)
-    wa_status = "✅ Aktif" if wa else "❌ Tidak aktif"
 
     name = tags[0][0] if tags else "-"
 
-    # ================= SAVE HISTORY =================
+    # SAVE HISTORY
     if r:
         history_data = {
             "number": number,
@@ -167,15 +168,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         r.lpush(f"history:{user_id}", json.dumps(history_data))
 
-    # ================= CONTEXT =================
-    context.user_data["tags"] = tags
-    context.user_data["page"] = 0
-    context.user_data["number"] = number
-    context.user_data["wa"] = wa_status
-    context.user_data["name"] = name
-    context.user_data["pernah"] = pernah
+    context.user_data.update({
+        "tags": tags,
+        "page": 0,
+        "number": number,
+        "name": name,
+        "pernah": pernah
+    })
 
     await send_page(update, context, edit_msg=loading)
+
 
 # ================= PAGINATION =================
 
@@ -183,7 +185,6 @@ async def send_page(update, context, edit_msg=None):
     tags = context.user_data.get("tags", [])
     page = context.user_data.get("page", 0)
     number = context.user_data.get("number", "")
-    wa = context.user_data.get("wa", "")
     name = context.user_data.get("name", "-")
     pernah = context.user_data.get("pernah", False)
 
@@ -198,19 +199,18 @@ async def send_page(update, context, edit_msg=None):
     else:
         text_tags = "\n".join(
             [
-                f"{i}. {html.escape(t)} >> <b>{c} Tag</b>"
+                f"{i}. {t.title()} >> <b>{c} Tag</b>"
                 for i, (t, c) in enumerate(page_tags, start=start+1)
             ]
         )
 
     total_page = (len(tags) // per_page) + 1
-    history_text = "🕘 Pernah dicari sebelumnya" if pernah else ""
+    history_text = "🕘 Pernah dicari sebelumnya\n" if pernah else ""
 
     msg = f"""📱 {number}
 💬 https://wa.me/{number}
 {history_text}
-
-👤 {html.escape(name)}
+👤 {html.escape(name.title())}
 📊 {len(tags)} tag
 📄 Page {page+1}/{total_page}
 
@@ -243,6 +243,7 @@ async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["page"] -= 1
 
     await send_page(update, context)
+
 
 # ================= HISTORY =================
 
@@ -298,6 +299,7 @@ async def history_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await send_history(update, context)
 
+
 # ================= EXPORT =================
 
 async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -335,10 +337,16 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filename="history.xlsx"
     )
 
+
 # ================= MAIN =================
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
+
+    async def init():
+        await app.bot.delete_webhook(drop_pending_updates=True)
+
+    app.post_init = init
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("history", history))
