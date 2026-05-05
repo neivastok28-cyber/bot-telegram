@@ -19,10 +19,6 @@ TOKEN = os.getenv("BOT_TOKEN")
 GC_TOKEN = os.getenv("GC_TOKEN")
 REDIS_URL = os.getenv("REDIS_URL")
 
-print("BOT TOKEN:", TOKEN)
-print("GC TOKEN:", GC_TOKEN)
-print("REDIS:", REDIS_URL)
-
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
 
 logging.basicConfig(level=logging.INFO)
@@ -39,13 +35,13 @@ def format_number(text):
     elif number.startswith("8"):
         number = "62" + number
     else:
-        return None
+        return ""
 
     return number
 
 def cek_wa(number):
     try:
-        res = requests.get(f"https://wa.me/{number}")
+        res = requests.get(f"https://wa.me/{number}", timeout=5)
         return res.status_code == 200
     except:
         return False
@@ -53,40 +49,49 @@ def cek_wa(number):
 def get_gc(number):
     try:
         url = f"https://gcontact.id/api?token={GC_TOKEN}&nomor={number}"
-        res = requests.get(url).json()
+        res = requests.get(url, timeout=10).json()
+
+        print("GC RESPONSE:", res)
 
         if res.get("status") == True:
             return res.get("data", [])
         return []
-    except:
+    except Exception as e:
+        print("GC ERROR:", e)
         return []
 
 # ================= HANDLER =================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+    try:
+        print("MASUK:", update.message.text)
 
-    if not re.search(r"\d{8,}", text):
-        return await update.message.reply_text("❌ Masukkan nomor yang valid")
+        text = update.message.text
+        if not text:
+            return
 
-    number = format_number(text)
+        number = format_number(text)
 
-    if not number:
-        return await update.message.reply_text("❌ Format nomor tidak dikenali")
+        if not number or len(number) < 10:
+            return await update.message.reply_text("❌ Nomor tidak valid")
 
-    # SAVE HISTORY
-    if r:
-        r.lpush(f"history:{update.effective_user.id}", number)
+        # SAVE HISTORY
+        if r:
+            r.lpush(f"history:{update.effective_user.id}", number)
 
-    tags = get_gc(number)
-    wa_status = "✅ Aktif" if cek_wa(number) else "❌ Tidak aktif"
+        tags = get_gc(number)
+        wa_status = "✅ Aktif" if cek_wa(number) else "❌ Tidak aktif"
 
-    context.user_data["tags"] = tags
-    context.user_data["page"] = 0
-    context.user_data["number"] = number
-    context.user_data["wa"] = wa_status
+        context.user_data["tags"] = tags
+        context.user_data["page"] = 0
+        context.user_data["number"] = number
+        context.user_data["wa"] = wa_status
 
-    await send_page(update, context)
+        await send_page(update, context)
+
+    except Exception as e:
+        print("ERROR HANDLE:", e)
+        await update.message.reply_text("❌ ERROR DI SERVER")
 
 async def send_page(update, context):
     tags = context.user_data.get("tags", [])
@@ -165,7 +170,8 @@ import asyncio
 async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # 🔥 PENTING: pakai ALL biar pasti ke-trigger
+    app.add_handler(MessageHandler(filters.ALL, handle_message))
     app.add_handler(CallbackQueryHandler(pagination))
     app.add_handler(MessageHandler(filters.Regex("^/history$"), history))
 
