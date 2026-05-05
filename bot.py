@@ -5,6 +5,7 @@ import requests
 import redis
 import json
 import asyncio
+import html
 from collections import Counter
 from io import BytesIO
 from openpyxl import Workbook
@@ -57,11 +58,17 @@ def get_gcontact(number):
 def extract_tags(data):
     try:
         tags_raw = data.get("data", {}).get("getcontact", {}).get("tags", [])
-        tags = [t.get("value") for t in tags_raw if t.get("value")]
+
+        # lowercase biar exact match bersih
+        tags = [t.get("value").strip().lower() for t in tags_raw if t.get("value")]
 
         counter = Counter(tags)
+
+        # urut dari terbesar
         return sorted(counter.items(), key=lambda x: x[1], reverse=True)
-    except:
+
+    except Exception as e:
+        print("ERROR extract_tags:", e)
         return []
 
 # ================= CACHE =================
@@ -82,6 +89,7 @@ def get_cache(number):
 def set_cache(number, data):
     if not r:
         return
+
     r.setex(f"cache:{number}", 86400, json.dumps(data))  # 1 hari
 
 # ================= HISTORY =================
@@ -111,6 +119,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📥 /export export excel"
     )
 
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     print("DAPAT PESAN:", text)
@@ -122,7 +131,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     pernah = check_history(user_id, number)
 
-    # 🔎 LOADING MESSAGE
+    # 🔎 LOADING
     loading = await update.message.reply_text("🔎 Sedang mencari data...")
 
     # ================= CACHE =================
@@ -133,7 +142,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = cached
     else:
         print("HIT API")
-        await asyncio.sleep(1)  # anti spam API
+        await asyncio.sleep(1)
         data = get_gcontact(number)
 
         if not data or not data.get("success"):
@@ -158,7 +167,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         r.lpush(f"history:{user_id}", json.dumps(history_data))
 
-    # ================= SAVE CONTEXT =================
+    # ================= CONTEXT =================
     context.user_data["tags"] = tags
     context.user_data["page"] = 0
     context.user_data["number"] = number
@@ -168,7 +177,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_page(update, context, edit_msg=loading)
 
-# ================= PAGINATION TAG =================
+# ================= PAGINATION =================
 
 async def send_page(update, context, edit_msg=None):
     tags = context.user_data.get("tags", [])
@@ -188,7 +197,10 @@ async def send_page(update, context, edit_msg=None):
         text_tags = "❌ Tidak ada data"
     else:
         text_tags = "\n".join(
-            [f"{i}. {t} >> {c} Tag" for i, (t, c) in enumerate(page_tags, start=start+1)]
+            [
+                f"{i}. {html.escape(t)} >> <b>{c} Tag</b>"
+                for i, (t, c) in enumerate(page_tags, start=start+1)
+            ]
         )
 
     total_page = (len(tags) // per_page) + 1
@@ -198,7 +210,7 @@ async def send_page(update, context, edit_msg=None):
 💬 https://wa.me/{number}
 {history_text}
 
-👤 {name}
+👤 {html.escape(name)}
 📊 {len(tags)} tag
 📄 Page {page+1}/{total_page}
 
@@ -214,11 +226,12 @@ async def send_page(update, context, edit_msg=None):
     reply_markup = InlineKeyboardMarkup([buttons]) if buttons else None
 
     if edit_msg:
-        await edit_msg.edit_text(msg, reply_markup=reply_markup)
+        await edit_msg.edit_text(msg, reply_markup=reply_markup, parse_mode="HTML")
     elif update.callback_query:
-        await update.callback_query.edit_message_text(msg, reply_markup=reply_markup)
+        await update.callback_query.edit_message_text(msg, reply_markup=reply_markup, parse_mode="HTML")
     else:
-        await update.message.reply_text(msg, reply_markup=reply_markup)
+        await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode="HTML")
+
 
 async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -236,6 +249,7 @@ async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["history_page"] = 0
     await send_history(update, context)
+
 
 async def send_history(update, context):
     user_id = update.effective_user.id
@@ -271,6 +285,7 @@ async def send_history(update, context):
         await update.callback_query.edit_message_text(msg, reply_markup=reply_markup)
     else:
         await update.message.reply_text(msg, reply_markup=reply_markup)
+
 
 async def history_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -335,6 +350,7 @@ def main():
 
     print("🚀 BOT RUNNING...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
