@@ -7,6 +7,7 @@ import json
 from collections import Counter
 from io import BytesIO
 from openpyxl import Workbook
+import time
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -64,6 +65,31 @@ def extract_tags(data):
         return []
 
 
+# ================= CACHE =================
+
+def get_cache(number):
+    if not r:
+        return None
+
+    data = r.get(f"cache:{number}")
+    if data:
+        try:
+            return json.loads(data)
+        except:
+            return None
+    return None
+
+
+def set_cache(number, data):
+    if not r:
+        return
+
+    # 1 hari
+    r.setex(f"cache:{number}", 86400, json.dumps(data))
+
+
+# ================= HISTORY CHECK =================
+
 def check_history(user_id, number):
     if not r:
         return False
@@ -79,10 +105,16 @@ def check_history(user_id, number):
                 return True
     return False
 
+
 # ================= HANDLER =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Bot aktif!\nKirim nomor untuk cek")
+    await update.message.reply_text(
+        "✅ Bot aktif!\n\n"
+        "📱 Kirim nomor untuk cek\n"
+        "📜 /history lihat riwayat\n"
+        "📥 /export export excel"
+    )
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,7 +128,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     pernah = check_history(user_id, number)
 
-    data = get_gcontact(number)
+    # 🔎 LOADING
+    loading = await update.message.reply_text("🔎 Sedang mencari data...")
+
+    # ================= CACHE =================
+    cached = get_cache(number)
+
+    if cached:
+        print("AMBIL DARI CACHE")
+        data = cached
+    else:
+        print("HIT API")
+        time.sleep(1)  # anti spam API
+        data = get_gcontact(number)
+
+        if not data or not data.get("success"):
+            await loading.edit_text("❌ API error / limit")
+            return
+
+        set_cache(number, data)
+
+    # ================= PROSES =================
     tags = extract_tags(data)
 
     wa = data.get("data", {}).get("whatsapp", {}).get("exist", False)
@@ -104,7 +156,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     name = tags[0][0] if tags else "-"
 
-    # 🔥 SIMPAN KE REDIS (JSON)
+    # ================= SIMPAN HISTORY =================
     if r:
         history_data = {
             "number": number,
@@ -120,11 +172,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["name"] = name
     context.user_data["pernah"] = pernah
 
-    await send_page(update, context)
+    await send_page(update, context, edit_msg=loading)
+
 
 # ================= PAGINATION TAG =================
 
-async def send_page(update, context):
+async def send_page(update, context, edit_msg=None):
     tags = context.user_data.get("tags", [])
     page = context.user_data.get("page", 0)
     number = context.user_data.get("number", "")
@@ -167,7 +220,9 @@ async def send_page(update, context):
 
     reply_markup = InlineKeyboardMarkup([buttons]) if buttons else None
 
-    if update.callback_query:
+    if edit_msg:
+        await edit_msg.edit_text(msg, reply_markup=reply_markup)
+    elif update.callback_query:
         await update.callback_query.edit_message_text(msg, reply_markup=reply_markup)
     else:
         await update.message.reply_text(msg, reply_markup=reply_markup)
@@ -183,6 +238,7 @@ async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["page"] -= 1
 
     await send_page(update, context)
+
 
 # ================= HISTORY =================
 
@@ -238,6 +294,7 @@ async def history_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await send_history(update, context)
 
+
 # ================= EXPORT =================
 
 async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -276,6 +333,7 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filename="history.xlsx"
     )
 
+
 # ================= MAIN =================
 
 def main():
@@ -291,6 +349,7 @@ def main():
 
     print("🚀 BOT RUNNING...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
