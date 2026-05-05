@@ -44,7 +44,19 @@ def format_number(text):
     return None
 
 
-# 🔥 ASYNC API (SUPER CEPAT)
+# 🔥 NORMALISASI (tanpa rusak tampilan)
+def normalize_tag(val):
+    val = val.strip()
+    val = re.sub(r"\s+", " ", val)
+    return val
+
+
+# 🔥 RAPIIIN NAMA
+def smart_title(val):
+    return " ".join([w.capitalize() for w in val.split()])
+
+
+# 🔥 ASYNC API
 async def get_gcontact(number):
     try:
         url = f"https://gcontact.id/api?token={GC_TOKEN}&nomor={number}"
@@ -55,29 +67,50 @@ async def get_gcontact(number):
         return {}
 
 
-# 🔥 NORMALISASI + GABUNG TAG
+# 🔥 EXTRACT TAG (GABUNG CASE INSENSITIVE)
 def extract_tags(data):
     try:
         tags_raw = data.get("data", {}).get("getcontact", {}).get("tags", [])
 
-        cleaned = []
+        temp = {}
 
         for t in tags_raw:
             val = t.get("value")
             if not val:
                 continue
 
-            val = val.strip().lower()
-            val = re.sub(r"\s+", " ", val)
+            val = normalize_tag(val)
 
-            cleaned.append(val)
+            key = val.lower()  # 🔥 gabung disini
 
-        counter = Counter(cleaned)
+            if key not in temp:
+                temp[key] = {
+                    "name": val,
+                    "count": 0
+                }
 
-        return sorted(counter.items(), key=lambda x: x[1], reverse=True)
+            temp[key]["count"] += 1
 
-    except:
+        result = []
+
+        for v in temp.values():
+            name = smart_title(v["name"])
+            count = v["count"]
+
+            result.append((name, count))
+
+        result.sort(key=lambda x: x[1], reverse=True)
+
+        return result
+
+    except Exception as e:
+        print("ERROR extract_tags:", e)
         return []
+
+
+# 🔥 NAMA UTAMA
+def get_main_name(tags):
+    return tags[0][0] if tags else "-"
 
 
 # ================= CACHE =================
@@ -132,7 +165,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     loading = await update.message.reply_text("🔎 Sedang mencari...")
 
-    # CACHE
     cached = get_cache(number)
 
     if cached:
@@ -146,11 +178,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         set_cache(number, data)
 
-    # PROSES
     tags = extract_tags(data)
-    name = tags[0][0] if tags else "-"
+    name = get_main_name(tags)
 
-    # AUTO REMOVE DUPLICATE HISTORY
+    # 🔥 HISTORY FIX
     if r:
         remove_duplicate_history(user_id, number)
 
@@ -188,7 +219,7 @@ async def send_page(update, context, edit_msg=None):
 
     text_tags = "\n".join(
         [
-            f"{i}. {t.title()} >> <b>{c} Tag</b>"
+            f"{i}. {t} >> <b>{c} Tag</b>"
             for i, (t, c) in enumerate(page_tags, start=start+1)
         ]
     ) if page_tags else "❌ Tidak ada data"
@@ -198,7 +229,7 @@ async def send_page(update, context, edit_msg=None):
     msg = f"""📱 {number}
 💬 https://wa.me/{number}
 
-👤 {html.escape(name.title())}
+👤 {html.escape(name)}
 📊 {len(tags)} tag
 📄 Page {page+1}/{total_page}
 
@@ -285,7 +316,7 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_document(file_stream, filename="history.xlsx")
 
 
-# ================= INIT FIX (PENTING) =================
+# ================= INIT FIX =================
 
 async def init(app):
     await app.bot.delete_webhook(drop_pending_updates=True)
