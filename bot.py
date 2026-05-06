@@ -166,7 +166,7 @@ async def get_gcontact(number):
                 print("NUMBER:", number)
                 print("RESPONSE:", data)
                 print("TAGS RAW:", data.get("data", {}).get("getcontact", {}).get("tags"))
-                print("PICTURE:", picture)
+                print("PICTURE:", data.get("data", {}).get("getcontact", {}).get("picture"))
 
                 if data.get("success") and data.get("data"):
                     return data
