@@ -165,17 +165,22 @@ async def get_gcontact(number):
         try:
             async with session.get(url, timeout=10) as res:
                 data = await res.json()
-
+                print("====== DEBUG API ======")
+                print("TOKEN:", token)
+                print("NUMBER:", number)
+                print("RESPONSE:", data)
+                
                 tags = data.get("data", {}).get("getcontact", {}).get("tags")
 
                 if data.get("success") and tags:
                     return data
 
         except Exception as e:
-            print(f"Token error: {token} -> {e}")
+            print("ERROR:", e)
 
         await asyncio.sleep(1)
 
+    print("SEMUA TOKEN GAGAL")
     return {}
 
 # ================= TAG =================
