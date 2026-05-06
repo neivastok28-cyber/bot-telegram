@@ -208,7 +208,7 @@ def analyze_tags(tags):
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 MENU", reply_markup=main_menu(update.effective_user.id))
+    await update.message.reply_text("🤖 MENU UTAMA", reply_markup=main_menu(update.effective_user.id))
 
 
 # ================= MENU =================
@@ -218,14 +218,14 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     if q.data == "back":
-        return await q.edit_message_text("🤖 MENU", reply_markup=main_menu(user_id))
+        return await q.edit_message_text("🤖 MENU UTAMA", reply_markup=main_menu(user_id))
 
     if q.data == "check":
         return await q.edit_message_text("📱 Kirim nomor")
 
     if q.data == "profile":
         return await q.edit_message_text(
-            f"👤 PROFILE\n\nID: {user_id}\nQuota: {get_quota(user_id)}\nUsage: {get_usage(user_id)}",
+            f"👤 PROFILE\n\nID: {user_id}\n🎟 Quota: {get_quota(user_id)}\n📊 Usage: {get_usage(user_id)}",
             reply_markup=back_button()
         )
 
@@ -244,7 +244,9 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data == "admin":
         return await q.edit_message_text(
-            "⚙️ ADMIN PANEL\n\n/setquota <id> <jumlah>\n/addquota <id> <jumlah>",
+            "⚙️ ADMIN PANEL\n\n"
+            "➕ /addquota <id> <jumlah>\n"
+            "🛠 /setquota <id> <jumlah>",
             reply_markup=back_button()
         )
 
@@ -252,18 +254,40 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= ADMIN =================
 async def setquota_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        return
+        return await update.message.reply_text("❌ Bukan admin")
 
-    set_quota(int(context.args[0]), int(context.args[1]))
-    await update.message.reply_text("✅ quota diset")
+    try:
+        user_id = int(context.args[0])
+        amount = int(context.args[1])
+    except:
+        return await update.message.reply_text("❌ Format: /setquota 123 50")
+
+    set_quota(user_id, amount)
+
+    await update.message.reply_text(
+        f"✅ SET QUOTA\n\n👤 User: {user_id}\n🎟 Quota: {amount}"
+    )
 
 
 async def addquota_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        return
+        return await update.message.reply_text("❌ Bukan admin")
 
-    add_quota(int(context.args[0]), int(context.args[1]))
-    await update.message.reply_text("✅ quota ditambah")
+    try:
+        user_id = int(context.args[0])
+        amount = int(context.args[1])
+    except:
+        return await update.message.reply_text("❌ Format: /addquota 123 10")
+
+    add_quota(user_id, amount)
+
+    await update.message.reply_text(
+        f"""✅ ADD QUOTA
+
+👤 User: {user_id}
+➕ Tambah: {amount}
+🎟 Total: {get_quota(user_id)}"""
+    )
 
 
 # ================= HANDLE =================
@@ -331,7 +355,7 @@ def main():
     app.add_handler(CallbackQueryHandler(menu))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 BOT FINAL PERFECT")
+    print("🚀 BOT FINAL FULL FITUR")
     app.run_polling()
 
 
