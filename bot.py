@@ -355,21 +355,21 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= HANDLE =================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if is_rate_limited(user_id):
-    return await update.message.reply_text("⚠️ Terlalu cepat, tunggu 10 detik")
+   if is_rate_limited(user_id):
+        return await update.message.reply_text("⚠️ Terlalu cepat")
 
     if not use_quota(user_id):
         return await update.message.reply_text("❌ quota habis")
 
-    number = format_number(update.message.text)
-    if not number:
-        return await update.message.reply_text("❌ nomor tidak valid")
+number = format_number(update.message.text)
+if not number:
+    return await update.message.reply_text("❌ nomor tidak valid")
+
 if not acquire_lock(number):
     return await update.message.reply_text("⏳ Nomor sedang diproses...")
     loading = await update.message.reply_text("🔎 mencari...")
 
-try:    
-
+try:
     cached = get_cache(number)
     data = cached if cached else await get_gcontact(number)
 
