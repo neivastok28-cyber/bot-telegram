@@ -210,7 +210,7 @@ def extract_tags(data):
 
     for t in tags_raw:
         val = t.get("value")
-        count = t.get("count", 1).
+        count = t.get("count", 1)
         
         if val:
             cleaned.extend([normalize_tag(val)] * count)
