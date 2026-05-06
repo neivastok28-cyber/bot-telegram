@@ -620,7 +620,15 @@ async def render_page(update, context, msg_obj):
 
     # LIST
     for chunk in chunks:
-        # ================= FOTO PALING AKHIR =================
+        text = "📌 <b>Tag List</b>\n\n" + "\n".join(chunk)
+
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text,
+            parse_mode="HTML"
+       )
+        
+# ================= FOTO PALING AKHIR =================
 if gc_picture:
     try:
         await context.bot.send_photo(
@@ -640,14 +648,6 @@ if wa_picture:
         )
     except Exception as e:
         print("WA ERROR:", e)
-        
-        text = "📌 <b>Tag List</b>\n\n" + "\n".join(chunk)
-
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=text,
-            parse_mode="HTML"
-        )
         
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
