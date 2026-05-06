@@ -517,12 +517,21 @@ async def init(app):
 def main():
     app = ApplicationBuilder().token(TOKEN).post_init(init).build()
 
+    # ================= COMMAND =================
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("setquota", set_quota))
-    app.add_handler(CommandHandler("addquota", add_quota))
 
-    app.add_handler(CallbackQueryHandler(menu))
+    # 🔥 pakai handler yang benar
+    app.add_handler(CommandHandler("setquota", setquota_cmd))
+    app.add_handler(CommandHandler("addquota", addquota_cmd))
+
+    # ================= CALLBACK =================
+    # 🔥 WAJIB: pagination di atas
     app.add_handler(CallbackQueryHandler(pagination, pattern="^(next|prev)$"))
+
+    # 🔥 baru menu
+    app.add_handler(CallbackQueryHandler(menu))
+
+    # ================= MESSAGE =================
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("🚀 BOT FINAL SUPER PERFECT")
