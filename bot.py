@@ -488,7 +488,7 @@ async def render_page(update, context, msg_obj):
 
     text_tags = "\n".join([
         f"{html.escape(format_display(t))}  >> <b>{c} Tag</b>"
-        for i, (t, c) in enumerate(filtered_part, start=1)
+        for i, (t, c) in enumerate(filtered_part, start=start)
     ]) or "-"
 
     text_raw = "\n".join([
@@ -504,7 +504,7 @@ async def render_page(update, context, msg_obj):
     msg = f"""📱 {number}
 💬 https://wa.me/{number}
 
-👤 {dominant.split()[0]}
+👤 {dominant.split()[0] if dominant != "-" else "-"}
 📊 {len(tags)} tag
 🎟 Sisa Quota: {get_quota(user_id)}
 
@@ -560,10 +560,21 @@ async def init(app):
     global session
     session = aiohttp.ClientSession()
 
+async def shutdown(app):
+    global session
+    if session:
+        await session.close()
+
 
 # ================= MAIN =================
 def main():
-    app = ApplicationBuilder().token(TOKEN).post_init(init).post_shutdown(shutdown).build()
+    app = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .post_init(init)
+        .post_shutdown(shutdown)
+        .build()
+    )
 
     # ================= COMMAND =================
     app.add_handler(CommandHandler("start", start))
