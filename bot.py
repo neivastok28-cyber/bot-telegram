@@ -567,9 +567,22 @@ async def render_page(update, context, msg_obj):
 
     dominant, alias, lokasi = analyze_tags(tags)
 
-    # format list
-    lines = []
+    # HEADER
+    await msg_obj.edit_text(
+        f"""☎️ <b>Contact List</b>
 
+👤 <b>{html.escape(dominant.split('(')[0])}</b> (Primary)
+
+📞 <b>Whatsapp</b>
+Terdaftar
+<a href="https://wa.me/{number}">{number}</a>
+""",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+    # TAG LIST
+    lines = []
     for t, c in tags:
         name = format_display(t)
 
@@ -581,52 +594,8 @@ async def render_page(update, context, msg_obj):
         lines.append(line)
 
     MAX_LINES = 85
+    chunks = [lines[i:i + MAX_LINES] for i in range(0, len(lines), MAX_LINES)]
 
-    chunks = [
-        lines[i:i + MAX_LINES]
-        for i in range(0, len(lines), MAX_LINES)
-    ]
-
-    if gc_picture:
-        await context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                photo=gc_picture,
-                caption="📇 GetContact Photo"
-            )
-        except Exception as e:
-            print("GC PHOTO ERROR:", e)
-
-    if wa_picture:
-        await context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                photo=wa_picture,
-                caption="📱 WhatsApp Profile"
-            )
-        except Exception as e:
-            print("WA PHOTO ERROR:", e)
-
-# ================= QUOTA PALING AKHIR =================
-await context.bot.send_message(
-    chat_id=update.effective_chat.id,
-    text=f"⚡ Remaining Quota <b>{quota}</b>",
-    parse_mode="HTML"
-)
-
-    # HEADER
-    await msg_obj.edit_text(
-        f"""☎️ <b>Contact List</b>
-
-    👤 <b>{html.escape(dominant.split('(')[0])}</b> (Primary)
-
-    📞 <b>Whatsapp</b>
-    Terdaftar
-    <a href="https://wa.me/{number}">https://wa.me/{number}</a>
-    """,
-        parse_mode="HTML",
-        disable_web_page_preview=True
-    )
-
-    # LIST
     for chunk in chunks:
         text = "📌 <b>Tag List</b>\n\n" + "\n".join(chunk)
 
@@ -634,7 +603,35 @@ await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=text,
             parse_mode="HTML"
-       )
+        )
+
+    # FOTO (PALING AKHIR)
+    if gc_picture:
+        try:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=gc_picture,
+                caption="📇 GetContact Photo"
+            )
+        except Exception as e:
+            print("GC ERROR:", e)
+
+    if wa_picture:
+        try:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=wa_picture,
+                caption="📱 WhatsApp Profile"
+            )
+        except Exception as e:
+            print("WA ERROR:", e)
+
+    # QUOTA PALING AKHIR
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"⚡ <b>Remaining Quota:</b> <code>{quota}</code>",
+        parse_mode="HTML"
+    )
         
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
