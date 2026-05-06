@@ -24,7 +24,7 @@ from telegram.ext import (
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
-GC_TOKENS = os.getenv("API_TOKENS1",API_TOKENS2 "").split(",")
+GC_TOKENS = os.getenv("API_TOKENS", "").split(",")
 REDIS_URL = os.getenv("REDIS_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
@@ -141,7 +141,6 @@ def set_cache(number, data):
 
 
 # ================= API =================
-token_index = 0
 def get_next_token():
     global token_index
 
@@ -182,7 +181,7 @@ async def get_gcontact(number):
 # ================= TAG =================
 def normalize_tag(text):
     text = text.strip()
-    text = re.sub(r"[^a-z0-9\s]", "", text)
+    text = text.strip()
     text = re.sub(r"(.)\1+", r"\1", text)
     text = re.sub(r"\s+", " ", text).strip()
 
@@ -536,8 +535,6 @@ async def render_page(update, context, msg_obj):
     dominant, alias, lokasi = analyze_tags(tags)
 
     text_tags_list = []
-    
-    text_tags_list = []
 
     for t, c in tags[start:end]:
         text_tags_list.append(
@@ -556,34 +553,15 @@ async def render_page(update, context, msg_obj):
         math.ceil(len(raw)/per_page)
     )
 
-    msg = f"""☎️ Contact List
+msg = f"""☎️ Contact List
 
-    {html.escape(dominant.split('(')[0])} (Primary)
-
-    {text_tags}
-
-    📞 Whatsapp
-    Terdaftar
-    https://wa.me/{number}
-    """
-
-👤 {dominant.split()[0] if dominant != "-" else "-"}
-📊 {len(tags)} tag
-🎟 Sisa Quota: {get_quota(user_id)}
-
-⚠️ Dominan: {dominant}
-⚠️ Alias: {alias}
-📍 Lokasi: {lokasi}
-
-📄 Page {page+1}/{total_page}
-
-🏷 Semua Tag (Filtered):
+{html.escape(dominant.split('(')[0])} (Primary)
 
 {text_tags}
 
-📦 Semua Tag Asli:
-
-{text_raw}
+📞 Whatsapp
+Terdaftar
+https://wa.me/{number}
 """
 
     if len(msg) > 4000:
