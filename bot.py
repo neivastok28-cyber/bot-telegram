@@ -42,9 +42,7 @@ def main_menu(user_id):
             InlineKeyboardButton("👤 Profile", callback_data="profile"),
             InlineKeyboardButton("📊 Dashboard", callback_data="dashboard"),
         ],
-        [
-            InlineKeyboardButton("🎟 Quota", callback_data="quota"),
-        ],
+        [InlineKeyboardButton("🎟 Quota", callback_data="quota")],
         [
             InlineKeyboardButton("📜 History", callback_data="history"),
             InlineKeyboardButton("📥 Export", callback_data="export"),
@@ -255,8 +253,8 @@ def analyze_tags(tags):
 
     alias = " / ".join(set(alias)) if alias else "-"
 
-    lokasi_list = ["jakarta", "bengkulu", "bandung", "surabaya", "medan"]
     lokasi = "-"
+    lokasi_list = ["jakarta", "bengkulu", "bandung", "surabaya", "medan"]
 
     for t, _ in tags:
         for loc in lokasi_list:
@@ -303,11 +301,142 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_button()
         )
 
+    if q.data == "history":
+        raw = r.lrange(f"history:{user_id}", 0, 10)
+        text = "\n".join([json.loads(x)["number"] for x in raw]) or "-"
+        return await q.edit_message_text(text, reply_markup=back_button())
+
+    if q.data == "export":
+        return await export_history(update, context)
+
+    if q.data == "clear":
+        r.delete(f"history:{user_id}")
+        return await q.edit_message_text("🗑 History dihapus", reply_markup=back_button())
+
     if q.data == "admin":
         return await q.edit_message_text(
             "⚙️ ADMIN PANEL\n/addquota <id> <jumlah>\n/setquota <id> <jumlah>",
             reply_markup=back_button()
         )
+
+
+# ================= EXPORT =================
+async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    raw = r.lrange(f"history:{user_id}", 0, 9999)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["No", "Nomor", "Nama", "Total Tag"])
+
+    for i, item in enumerate(raw, start=1):
+        obj = json.loads(item)
+        ws.append([i, obj["number"], obj["name"], len(obj["tags"])])
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+
+    await context.bot.send_document(chat_id=user_id, document=bio, filename="history.xlsx")
+
+
+# ================= HANDLE =================
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if not use_quota(user_id):
+        return await update.message.reply_text("❌ quota habis")
+
+    number = format_number(update.message.text)
+    if not number:
+        return await update.message.reply_text("❌ nomor tidak valid")
+
+    loading = await update.message.reply_text("🔎 mencari...")
+
+    cached = get_cache(number)
+    data = cached if cached else await get_gcontact(number)
+
+    if not data:
+        return await loading.edit_text("❌ tidak ditemukan")
+
+    if not cached:
+        set_cache(number, data)
+
+    add_usage(user_id)
+
+    tags_raw_counter = extract_tags(data)
+    tags = merge_similar_tags(tags_raw_counter)
+
+    # RAW TAG LIST
+    raw_list = []
+    for tag, count in tags_raw_counter:
+        raw_list.extend([tag] * count)
+
+    raw_display = "\n".join([
+        f"{i+1}. {format_display(t)}"
+        for i, t in enumerate(raw_list[:50])
+    ])
+
+    dominant, alias, lokasi = analyze_tags(tags)
+
+    # PAGINATION
+    per_page = 50
+    page = context.user_data.get("page", 0)
+
+    start = page * per_page
+    end = start + per_page
+    page_tags = tags[start:end]
+
+    text_tags = "\n".join([
+        f"{i+1}. {format_display(t)}  >> <b>{c} Tag</b>"
+        for i, (t, c) in enumerate(page_tags, start=start)
+    ])
+
+    total_page = math.ceil(len(tags) / per_page)
+
+    msg = f"""📱 {number}
+💬 https://wa.me/{number}
+
+👤 {dominant.split()[0]}
+📊 {len(tags)} tag
+🎟 Sisa Quota: {get_quota(user_id)}
+
+⚠️ Dominan: {dominant}
+⚠️ Alias: {alias}
+📍 Lokasi: {lokasi}
+
+📄 Page {page+1}/{total_page}
+
+🏷 Semua Tag (Filtered):
+
+{text_tags}
+
+📦 Semua Tag Asli (Top 50):
+
+{raw_display}
+"""
+
+    buttons = []
+    if start > 0:
+        buttons.append(InlineKeyboardButton("⬅️", callback_data="prev"))
+    if end < len(tags):
+        buttons.append(InlineKeyboardButton("➡️", callback_data="next"))
+
+    markup = InlineKeyboardMarkup([buttons]) if buttons else None
+
+    context.user_data["tags"] = tags
+    context.user_data["number"] = number
+
+    await loading.edit_text(msg, parse_mode="HTML", reply_markup=markup)
+
+
+# ================= PAGINATION =================
+async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    context.user_data["page"] += 1 if q.data == "next" else -1
+    await handle_message(update, context)
 
 
 # ================= INIT =================
@@ -321,13 +450,11 @@ def main():
     app = ApplicationBuilder().token(TOKEN).post_init(init).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("setquota", set_quota))
-    app.add_handler(CommandHandler("addquota", add_quota))
-
     app.add_handler(CallbackQueryHandler(menu))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: None))
+    app.add_handler(CallbackQueryHandler(pagination, pattern="^(next|prev)$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 BOT FINAL FIX MENU QUOTA")
+    print("🚀 BOT FINAL SUPER PERFECT")
     app.run_polling()
 
 
