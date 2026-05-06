@@ -5,9 +5,11 @@ import json
 import asyncio
 import html
 from collections import Counter
+from io import BytesIO
 
 import aiohttp
 import redis
+from openpyxl import Workbook
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -35,9 +37,15 @@ session = None
 def main_menu(user_id):
     buttons = [
         [InlineKeyboardButton("🔍 Cek Nomor", callback_data="check")],
-        [InlineKeyboardButton("👤 Profile", callback_data="profile"),
-         InlineKeyboardButton("📊 Dashboard", callback_data="dashboard")],
-        [InlineKeyboardButton("🎟 Quota", callback_data="quota")],
+        [
+            InlineKeyboardButton("👤 Profile", callback_data="profile"),
+            InlineKeyboardButton("📊 Dashboard", callback_data="dashboard"),
+        ],
+        [
+            InlineKeyboardButton("📜 History", callback_data="history"),
+            InlineKeyboardButton("📥 Export", callback_data="export"),
+        ],
+        [InlineKeyboardButton("🗑 Clear", callback_data="clear")],
     ]
 
     if user_id == ADMIN_ID:
@@ -229,12 +237,6 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_button()
         )
 
-    if q.data == "quota":
-        return await q.edit_message_text(
-            f"🎟 Sisa Quota: {get_quota(user_id)}",
-            reply_markup=back_button()
-        )
-
     if q.data == "dashboard":
         total_users = len(r.keys("quota:*")) if r else 0
         return await q.edit_message_text(
@@ -242,51 +244,71 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_button()
         )
 
+    if q.data == "history":
+        raw = r.lrange(f"history:{user_id}", 0, 10)
+        text = "\n".join([json.loads(x)["number"] for x in raw]) or "-"
+        return await q.edit_message_text(text, reply_markup=back_button())
+
+    if q.data == "export":
+        return await export_history(update, context)
+
+    if q.data == "clear":
+        r.delete(f"history:{user_id}")
+        return await q.edit_message_text("🗑 History dihapus", reply_markup=back_button())
+
     if q.data == "admin":
         return await q.edit_message_text(
-            "⚙️ ADMIN PANEL\n\n"
-            "➕ /addquota <id> <jumlah>\n"
-            "🛠 /setquota <id> <jumlah>",
+            "⚙️ ADMIN PANEL\n\n/addquota <id> <jumlah>\n/setquota <id> <jumlah>",
             reply_markup=back_button()
         )
+
+
+# ================= EXPORT =================
+async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    raw = r.lrange(f"history:{user_id}", 0, 9999)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["No", "Nomor", "Nama", "Total Tag"])
+
+    for i, item in enumerate(raw, start=1):
+        obj = json.loads(item)
+        ws.append([i, obj["number"], obj["name"], len(obj["tags"])])
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+
+    await context.bot.send_document(chat_id=user_id, document=bio, filename="history.xlsx")
 
 
 # ================= ADMIN =================
 async def setquota_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        return await update.message.reply_text("❌ Bukan admin")
+        return
 
-    try:
-        user_id = int(context.args[0])
-        amount = int(context.args[1])
-    except:
-        return await update.message.reply_text("❌ Format: /setquota 123 50")
+    uid = int(context.args[0])
+    amt = int(context.args[1])
+    set_quota(uid, amt)
 
-    set_quota(user_id, amount)
-
-    await update.message.reply_text(
-        f"✅ SET QUOTA\n\n👤 User: {user_id}\n🎟 Quota: {amount}"
-    )
+    await update.message.reply_text(f"✅ SET QUOTA\n👤 {uid}\n🎟 {amt}")
 
 
 async def addquota_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        return await update.message.reply_text("❌ Bukan admin")
+        return
 
-    try:
-        user_id = int(context.args[0])
-        amount = int(context.args[1])
-    except:
-        return await update.message.reply_text("❌ Format: /addquota 123 10")
-
-    add_quota(user_id, amount)
+    uid = int(context.args[0])
+    amt = int(context.args[1])
+    add_quota(uid, amt)
 
     await update.message.reply_text(
         f"""✅ ADD QUOTA
 
-👤 User: {user_id}
-➕ Tambah: {amount}
-🎟 Total: {get_quota(user_id)}"""
+👤 User: {uid}
+➕ Tambah: {amt}
+🎟 Total: {get_quota(uid)}"""
     )
 
 
@@ -355,7 +377,7 @@ def main():
     app.add_handler(CallbackQueryHandler(menu))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 BOT FINAL FULL FITUR")
+    print("🚀 BOT FINAL FULL MENU")
     app.run_polling()
 
 
