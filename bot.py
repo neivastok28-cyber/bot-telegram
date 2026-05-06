@@ -172,7 +172,7 @@ async def get_gcontact(number):
                 
                 tags = data.get("data", {}).get("getcontact", {}).get("tags")
 
-                if data.get("success") and tags:
+                if data.get("success") and data.get("data"):
                     return data
 
         except Exception as e:
@@ -313,7 +313,7 @@ def format_display(tag):
 # ================= ANALYZE =================
 def analyze_tags(tags):
     if not tags:
-        return "-", "-", "-"
+        return data  # tetap tampilkan walau minim
 
     dominant = tags[0][0]
     dominant_count = tags[0][1]
@@ -480,7 +480,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = cached if cached else await get_gcontact(number)
 
         if not data:
-            return await loading.edit_text("❌ tidak ditemukan")
+            return await loading.edit_text("⚠️ data kosong / API limit")
 
         if not cached:
             set_cache(number, data)
