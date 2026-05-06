@@ -79,10 +79,6 @@ def main_menu(user_id):
     return InlineKeyboardMarkup(buttons)
 
 
-def back_button():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Kembali", callback_data="back")]])
-
-
 # ================= HELPER =================
 def format_number(text):
     number = re.sub(r"\D", "", text)
@@ -529,14 +525,9 @@ async def render_page(update, context, msg_obj):
     tags = context.user_data["tags"]
     groups = context.user_data.get("groups", [])
     raw = context.user_data["raw"]
-    page = context.user_data["page"]
     number = context.user_data["number"]
 
-    per_page = 50
-    start = page * per_page
-    end = start + per_page
-
-    filtered_part = tags[start:end]
+    filtered_part = tags
     raw_part = raw[start:end]
 
     dominant, alias, lokasi = analyze_tags(tags)
@@ -548,7 +539,15 @@ async def render_page(update, context, msg_obj):
             f"• {html.escape(format_display(t))} ({c})"
         )
 
-    text_tags = "\n".join(text_tags_list) or "-"
+    lines = [
+        f"• {format_display(t)} ({c})"
+        for t, c in filtered_part
+    ]
+    MAX_LINES = 85
+    chunks = [
+        lines[i:i + MAX_LINES]
+        for i in range(0, len(lines), MAX_LINES)
+    ]
 
     text_raw = "\n".join([
         f"{html.escape(format_display(t))}"
@@ -574,15 +573,26 @@ async def render_page(update, context, msg_obj):
     if len(msg) > 4000:
         msg = msg[:4000] + "\n\n⚠️ Dipotong"
 
-    buttons = []
-    if page > 0:
-        buttons.append(InlineKeyboardButton("⬅️", callback_data="prev"))
-    if page < total_page - 1:
-        buttons.append(InlineKeyboardButton("➡️", callback_data="next"))
+    await msg_obj.edit_text(
+        f"""☎️ Contact List
 
-    markup = InlineKeyboardMarkup([buttons]) if buttons else None
+        {dominant}
 
-    await msg_obj.edit_text(msg, parse_mode="HTML", reply_markup=markup)
+        📞 Whatsapp
+         https://wa.me/{number}
+        """
+        )
+    for i, chunk in enumerate(chunks, start=1):
+        text = f"📄 Bagian {i}\n\n" + "\n".join(chunk)
+
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text
+        )
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text
+        )
 
 
 # ================= PAGINATION =================
@@ -630,10 +640,6 @@ def main():
     # 🔥 pakai handler yang benar
     app.add_handler(CommandHandler("setquota", setquota_cmd))
     app.add_handler(CommandHandler("addquota", addquota_cmd))
-
-    # ================= CALLBACK =================
-    # 🔥 WAJIB: pagination di atas
-    app.add_handler(CallbackQueryHandler(pagination, pattern="^(next|prev)$"))
 
     # 🔥 baru menu
     app.add_handler(CallbackQueryHandler(menu))
