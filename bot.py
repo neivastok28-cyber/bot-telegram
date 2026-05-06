@@ -6,7 +6,6 @@ import asyncio
 import html
 import math
 from collections import Counter
-from io import BytesIO
 
 import aiohttp
 import redis
@@ -39,7 +38,12 @@ def main_menu(user_id):
         [InlineKeyboardButton("🔍 Cek Nomor", callback_data="check")],
         [InlineKeyboardButton("👤 Profile", callback_data="profile"),
          InlineKeyboardButton("📊 Dashboard", callback_data="dashboard")],
+        [InlineKeyboardButton("🎟 Quota", callback_data="quota")],
     ]
+
+    if user_id == ADMIN_ID:
+        buttons.append([InlineKeyboardButton("⚙️ Admin Panel", callback_data="admin")])
+
     return InlineKeyboardMarkup(buttons)
 
 
@@ -60,6 +64,16 @@ def format_number(text):
 # ================= QUOTA =================
 def get_quota(user_id):
     return int(r.get(f"quota:{user_id}") or 0) if r else 0
+
+
+def set_quota(user_id, amount):
+    if r:
+        r.set(f"quota:{user_id}", amount)
+
+
+def add_quota(user_id, amount):
+    if r:
+        r.incrby(f"quota:{user_id}", amount)
 
 
 def use_quota(user_id):
@@ -125,7 +139,7 @@ def extract_tags(data):
         return []
 
 
-# ================= SMART MERGE (SESUAI REQUEST) =================
+# ================= SMART MERGE =================
 def is_base_name(tag):
     return len(tag.split()) == 1
 
@@ -137,13 +151,11 @@ def is_similar_name(a, b):
     if a == b:
         return True
 
-    # typo ringan
     if abs(len(a) - len(b)) <= 1:
         diff = sum(1 for x, y in zip(a, b) if x != y)
         if diff <= 1:
             return True
 
-    # substring (rikok vs riko)
     if a in b or b in a:
         return True
 
@@ -159,16 +171,11 @@ def merge_similar_tags(tags):
         for g in groups:
             if is_similar_name(tag, g["key"]):
                 g["count"] += count
-                g["items"].append(tag)
                 found = True
                 break
 
         if not found:
-            groups.append({
-                "key": tag,
-                "count": count,
-                "items": [tag]
-            })
+            groups.append({"key": tag, "count": count})
 
     return sorted([(g["key"], g["count"]) for g in groups], key=lambda x: x[1], reverse=True)
 
@@ -180,8 +187,6 @@ def analyze_tags(tags):
 
     dominant = tags[0][0]
     dominant_count = tags[0][1]
-
-    base = dominant
 
     alias = []
     for t, _ in tags[1:10]:
@@ -211,22 +216,61 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+    user_id = update.effective_user.id
+
+    if q.data == "back":
+        return await q.edit_message_text("🤖 MENU", reply_markup=main_menu(user_id))
 
     if q.data == "check":
-        await q.edit_message_text("📱 Kirim nomor")
+        return await q.edit_message_text("📱 Kirim nomor")
 
     if q.data == "profile":
-        uid = update.effective_user.id
-        await q.edit_message_text(
-            f"👤 PROFILE\n\nID: {uid}\nQuota: {get_quota(uid)}\nUsage: {get_usage(uid)}",
+        return await q.edit_message_text(
+            f"👤 PROFILE\n\nID: {user_id}\nQuota: {get_quota(user_id)}\nUsage: {get_usage(user_id)}",
+            reply_markup=back_button()
+        )
+
+    if q.data == "quota":
+        return await q.edit_message_text(
+            f"🎟 Sisa Quota: {get_quota(user_id)}",
             reply_markup=back_button()
         )
 
     if q.data == "dashboard":
-        await q.edit_message_text("📊 Dashboard aktif", reply_markup=back_button())
+        total_users = len(r.keys("quota:*")) if r else 0
+        return await q.edit_message_text(
+            f"📊 DASHBOARD\nUsers: {total_users}",
+            reply_markup=back_button()
+        )
 
-    if q.data == "back":
-        await q.edit_message_text("🤖 MENU", reply_markup=main_menu(update.effective_user.id))
+    if q.data == "admin":
+        return await q.edit_message_text(
+            "⚙️ ADMIN PANEL\n\n/setquota <id> <jumlah>\n/addquota <id> <jumlah>",
+            reply_markup=back_button()
+        )
+
+
+# ================= ADMIN COMMAND =================
+async def setquota_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    uid = int(context.args[0])
+    amt = int(context.args[1])
+    set_quota(uid, amt)
+
+    await update.message.reply_text("✅ quota diset")
+
+
+async def addquota_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    uid = int(context.args[0])
+    amt = int(context.args[1])
+    add_quota(uid, amt)
+
+    await update.message.reply_text("✅ quota ditambah")
 
 
 # ================= HANDLE =================
@@ -243,7 +287,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loading = await update.message.reply_text("🔎 mencari...")
 
     data = await get_gcontact(number)
-
     if not data:
         return await loading.edit_text("❌ tidak ditemukan")
 
@@ -289,10 +332,13 @@ def main():
     app = ApplicationBuilder().token(TOKEN).post_init(init).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("setquota", setquota_cmd))
+    app.add_handler(CommandHandler("addquota", addquota_cmd))
+
     app.add_handler(CallbackQueryHandler(menu))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 BOT FINAL CLEAN RUNNING")
+    print("🚀 BOT FINAL + ADMIN PANEL RUNNING")
     app.run_polling()
 
 
