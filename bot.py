@@ -475,7 +475,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 🔁 Cache / API
         cached = get_cache(number)
         data = cached if cached else await get_gcontact(number)
-        picture = data.get("data", {}).get("getcontact", {}).get("picture")
+        picture = data.get("data", {}).get("getcontact", {}).get("picture", None)
 
         if not data:
             return await loading.edit_text("⚠️ API error")
@@ -521,7 +521,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= RENDER =================
 async def render_page(update, context, msg_obj):
-    picture = context.user_data.get("picture")
+    picture = context.user_data.get("picture", None)
     tags = context.user_data["tags"]
     number = context.user_data["number"]
 
@@ -547,8 +547,8 @@ async def render_page(update, context, msg_obj):
                 photo=picture,
                 caption="👤 Profile Photo"
             )
-        except:
-            pass
+        except Exception as e:
+            print("PHOTO ERROR:", e)
 
     # HEADER
     await msg_obj.edit_text(
