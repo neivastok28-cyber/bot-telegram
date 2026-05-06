@@ -32,6 +32,28 @@ r = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else Non
 logging.basicConfig(level=logging.INFO)
 
 session = None
+# ================= TAMBAHAN ANTI LIMIT =================
+def is_rate_limited(user_id):
+    if not r:
+        return False
+    key = f"rate:{user_id}"
+    val = r.get(key)
+    if val and int(val) >= 5:
+        return True
+    r.incr(key)
+    r.expire(key, 10)
+    return False
+
+
+def acquire_lock(number):
+    if not r:
+        return True
+    return r.set(f"lock:{number}", "1", nx=True, ex=10)
+
+
+def release_lock(number):
+    if r:
+        r.delete(f"lock:{number}")
 
 
 # ================= UI =================
@@ -230,9 +252,9 @@ def merge_similar_tags(tags):
 def format_display(tag):
     words = tag.split()
 
-    if words[0] == "bg":
+    if words and words[0] == "bg":
         return "Bg " + " ".join(w.title() for w in words[1:])
-    if words[0] == "bang":
+    if words and words[0] == "bang":
         return "Bang " + " ".join(w.title() for w in words[1:])
 
     return " ".join(w.title() for w in words)
@@ -265,28 +287,20 @@ def analyze_tags(tags):
     return f"{format_display(dominant)} ({dominant_count})", alias.title(), lokasi
 
 
-# ================= START =================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 MENU UTAMA", reply_markup=main_menu(update.effective_user.id))
-
-
 # ================= MENU =================
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     user_id = update.effective_user.id
 
-    if q.data == "quota":
-        return await q.edit_message_text(
-            f"🎟 Sisa Quota: {get_quota(user_id)}",
-            reply_markup=back_button()
-        )
-
     if q.data == "back":
         return await q.edit_message_text("🤖 MENU UTAMA", reply_markup=main_menu(user_id))
 
     if q.data == "check":
         return await q.edit_message_text("📱 Kirim nomor")
+
+    if q.data == "quota":
+        return await q.edit_message_text(f"🎟 Sisa Quota: {get_quota(user_id)}", reply_markup=back_button())
 
     if q.data == "profile":
         return await q.edit_message_text(
@@ -296,13 +310,10 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data == "dashboard":
         total_users = len(r.keys("quota:*")) if r else 0
-        return await q.edit_message_text(
-            f"📊 DASHBOARD\nUsers: {total_users}",
-            reply_markup=back_button()
-        )
+        return await q.edit_message_text(f"📊 DASHBOARD\nUsers: {total_users}", reply_markup=back_button())
 
     if q.data == "history":
-        raw = r.lrange(f"history:{user_id}", 0, 10)
+        raw = r.lrange(f"history:{user_id}", 0, 10) if r else []
         text = "\n".join([json.loads(x)["number"] for x in raw]) or "-"
         return await q.edit_message_text(text, reply_markup=back_button())
 
@@ -310,7 +321,8 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await export_history(update, context)
 
     if q.data == "clear":
-        r.delete(f"history:{user_id}")
+        if r:
+            r.delete(f"history:{user_id}")
         return await q.edit_message_text("🗑 History dihapus", reply_markup=back_button())
 
     if q.data == "admin":
@@ -323,7 +335,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= EXPORT =================
 async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    raw = r.lrange(f"history:{user_id}", 0, 9999)
+    raw = r.lrange(f"history:{user_id}", 0, 9999) if r else []
 
     wb = Workbook()
     ws = wb.active
@@ -343,6 +355,8 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= HANDLE =================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    if is_rate_limited(user_id):
+    return await update.message.reply_text("⚠️ Terlalu cepat, tunggu 10 detik")
 
     if not use_quota(user_id):
         return await update.message.reply_text("❌ quota habis")
@@ -350,8 +364,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     number = format_number(update.message.text)
     if not number:
         return await update.message.reply_text("❌ nomor tidak valid")
-
+if not acquire_lock(number):
+    return await update.message.reply_text("⏳ Nomor sedang diproses...")
     loading = await update.message.reply_text("🔎 mencari...")
+
+try:    
 
     cached = get_cache(number)
     data = cached if cached else await get_gcontact(number)
@@ -367,32 +384,60 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tags_raw_counter = extract_tags(data)
     tags = merge_similar_tags(tags_raw_counter)
 
-    # RAW TAG LIST
     raw_list = []
-    for tag, count in tags_raw_counter:
-        raw_list.extend([tag] * count)
-
-    raw_display = "\n".join([
-        f"{i+1}. {format_display(t)}"
-        for i, t in enumerate(raw_list[:50])
-    ])
+    for t, c in tags_raw_counter:
+        raw_list.extend([t] * c)
 
     dominant, alias, lokasi = analyze_tags(tags)
 
-    # PAGINATION
-    per_page = 50
-    page = context.user_data.get("page", 0)
+    if r:
+        r.lpush(f"history:{user_id}", json.dumps({
+            "number": number,
+            "name": dominant,
+            "tags": tags
+        }))
+        r.ltrim(f"history:{user_id}", 0, 50)
 
+    context.user_data["tags"] = tags
+    context.user_data["raw"] = raw_list
+    context.user_data["page"] = 0
+    context.user_data["number"] = number
+
+    await render_page(update, context, loading)
+finally:
+    release_lock(number)
+
+# ================= RENDER =================
+async def render_page(update, context, msg_obj):
+    user_id = update.effective_user.id
+    tags = context.user_data["tags"]
+    raw = context.user_data["raw"]
+    page = context.user_data["page"]
+    number = context.user_data["number"]
+
+    per_page = 50
     start = page * per_page
     end = start + per_page
-    page_tags = tags[start:end]
+
+    filtered_part = tags[start:end]
+    raw_part = raw[start:end]
+
+    dominant, alias, lokasi = analyze_tags(tags)
 
     text_tags = "\n".join([
         f"{i+1}. {format_display(t)}  >> <b>{c} Tag</b>"
-        for i, (t, c) in enumerate(page_tags, start=start)
-    ])
+        for i, (t, c) in enumerate(filtered_part, start=start)
+    ]) or "-"
 
-    total_page = math.ceil(len(tags) / per_page)
+    text_raw = "\n".join([
+        f"{i+1}. {format_display(t)}"
+        for i, t in enumerate(raw_part, start=start)
+    ]) or "-"
+
+    total_page = max(
+        math.ceil(len(tags)/per_page),
+        math.ceil(len(raw)/per_page)
+    )
 
     msg = f"""📱 {number}
 💬 https://wa.me/{number}
@@ -411,23 +456,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 {text_tags}
 
-📦 Semua Tag Asli (Top 50):
+📦 Semua Tag Asli:
 
-{raw_display}
+{text_raw}
 """
 
+    if len(msg) > 4000:
+        msg = msg[:4000] + "\n\n⚠️ Dipotong"
+
     buttons = []
-    if start > 0:
+    if page > 0:
         buttons.append(InlineKeyboardButton("⬅️", callback_data="prev"))
-    if end < len(tags):
+    if page < total_page - 1:
         buttons.append(InlineKeyboardButton("➡️", callback_data="next"))
 
     markup = InlineKeyboardMarkup([buttons]) if buttons else None
 
-    context.user_data["tags"] = tags
-    context.user_data["number"] = number
-
-    await loading.edit_text(msg, parse_mode="HTML", reply_markup=markup)
+    await msg_obj.edit_text(msg, parse_mode="HTML", reply_markup=markup)
 
 
 # ================= PAGINATION =================
@@ -435,8 +480,17 @@ async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    context.user_data["page"] += 1 if q.data == "next" else -1
-    await handle_message(update, context)
+    if q.data == "next":
+        context.user_data["page"] += 1
+    else:
+        context.user_data["page"] -= 1
+
+    await render_page(update, context, q.message)
+
+
+# ================= START =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🤖 MENU UTAMA", reply_markup=main_menu(update.effective_user.id))
 
 
 # ================= INIT =================
@@ -450,6 +504,9 @@ def main():
     app = ApplicationBuilder().token(TOKEN).post_init(init).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("setquota", set_quota))
+    app.add_handler(CommandHandler("addquota", add_quota))
+
     app.add_handler(CallbackQueryHandler(menu))
     app.add_handler(CallbackQueryHandler(pagination, pattern="^(next|prev)$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
