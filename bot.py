@@ -553,16 +553,16 @@ async def render_page(update, context, msg_obj):
         math.ceil(len(raw)/per_page)
     )
 
-msg = f"""☎️ Contact List
+    msg = f"""☎️ Contact List
 
-{html.escape(dominant.split('(')[0])} (Primary)
+    {html.escape(dominant.split('(')[0])} (Primary)
 
-{text_tags}
+    {text_tags}
 
-📞 Whatsapp
-Terdaftar
-https://wa.me/{number}
-"""
+    📞 Whatsapp
+    Terdaftar
+    https://wa.me/{number}
+    """
 
     if len(msg) > 4000:
         msg = msg[:4000] + "\n\n⚠️ Dipotong"
