@@ -475,7 +475,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 🔁 Cache / API
         cached = get_cache(number)
         data = cached if cached else await get_gcontact(number)
-        picture = data.get("data", {}).get("getcontact", {}).get("picture", None)
+        gc_picture = data.get("data", {}).get("getcontact", {}).get("picture", None)
+        wa_picture = data.get("data", {}).get("whatsapp", {}).get("picture", None)
 
         if not data:
             return await loading.edit_text("⚠️ API error")
@@ -510,7 +511,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["groups"] = []
         context.user_data["raw"] = raw_list
         context.user_data["number"] = number
-        context.user_data["picture"] = picture
+        context.user_data["gc_picture"] = gc_picture
+        context.user_data["wa_picture"] = wa_picture
 
         # 🖥 Render
         await render_page(update, context, loading)
@@ -521,7 +523,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= RENDER =================
 async def render_page(update, context, msg_obj):
-    picture = context.user_data.get("picture", None)
+    gc_picture = context.user_data.get("gc_picture")
+    wa_picture = context.user_data.get("wa_picture", None)
     tags = context.user_data["tags"]
     number = context.user_data["number"]
 
@@ -540,15 +543,25 @@ async def render_page(update, context, msg_obj):
         for i in range(0, len(lines), MAX_LINES)
     ]
 
-    if picture:
+    if gc_picture:
         try:
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
-                photo=picture,
-                caption="👤 Profile Photo"
+                photo=gc_picture,
+                caption="📇 GetContact Photo"
             )
         except Exception as e:
-            print("PHOTO ERROR:", e)
+            print("GC PHOTO ERROR:", e)
+
+    if wa_picture:
+        try:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=wa_picture,
+                caption="📱 WhatsApp Profile"
+            )
+        except Exception as e:
+            print("WA PHOTO ERROR:", e)
 
     # HEADER
     await msg_obj.edit_text(
