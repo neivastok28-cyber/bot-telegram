@@ -24,7 +24,7 @@ from telegram.ext import (
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
-GC_TOKEN = os.getenv("API_TOKEN")
+GC_TOKENS = os.getenv("API_TOKENS1",API_TOKENS2 "").split(",")
 REDIS_URL = os.getenv("REDIS_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
@@ -32,6 +32,7 @@ r = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else Non
 logging.basicConfig(level=logging.INFO)
 
 session = None
+token_index = 0
 # ================= TAMBAHAN ANTI LIMIT =================
 def is_rate_limited(user_id):
     if not r:
@@ -140,28 +141,47 @@ def set_cache(number, data):
 
 
 # ================= API =================
-async def get_gcontact(number):
-    url = f"https://gcontact.id/api?token={GC_TOKEN}&nomor={number}"
+token_index = 0
+def get_next_token():
+    global token_index
 
-    for _ in range(3):
+    if not GC_TOKENS:
+        return None
+
+    token = GC_TOKENS[token_index % len(GC_TOKENS)]
+    token_index += 1
+
+    return token
+
+
+async def get_gcontact(number):
+    for _ in range(len(GC_TOKENS)):  # coba semua token
+        token = get_next_token()
+
+        if not token:
+            return {}
+
+        url = f"https://gcontact.id/api?token={token}&nomor={number}"
+
         try:
             async with session.get(url, timeout=10) as res:
                 data = await res.json()
+
                 tags = data.get("data", {}).get("getcontact", {}).get("tags")
 
                 if data.get("success") and tags:
                     return data
-        except:
-            pass
 
-        await asyncio.sleep(2)
+        except Exception as e:
+            print(f"Token error: {token} -> {e}")
+
+        await asyncio.sleep(1)
 
     return {}
 
-
 # ================= TAG =================
 def normalize_tag(text):
-    text = text.lower()
+    text = text.strip()
     text = re.sub(r"[^a-z0-9\s]", "", text)
     text = re.sub(r"(.)\1+", r"\1", text)
     text = re.sub(r"\s+", " ", text).strip()
@@ -465,8 +485,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 🏷 Tag processing
         tags_raw_counter = extract_tags(data)
-        groups = merge_with_alias(tags_raw_counter) 
-        tags = [(g["key"], g["count"]) for g in groups]
+        tags = sorted(tags_raw_counter, key=lambda x: (-x[1], x[0]))
+        groups = []
 
         raw_list = []
         for t, c in tags_raw_counter:
@@ -485,7 +505,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 💾 Simpan ke session
         context.user_data["tags"] = tags
-        context.user_data["groups"] = groups
+        context.user_data["groups"] = []
         context.user_data["raw"] = raw_list
         context.user_data["page"] = 0
         context.user_data["number"] = number
@@ -517,20 +537,11 @@ async def render_page(update, context, msg_obj):
 
     text_tags_list = []
     
-    for i, g in enumerate(groups[start:end], start=start):
-        main_tag = html.escape(format_display(g["key"]))
-        count = g["count"]
+    text_tags_list = []
 
-        aliases = list(set(g["aliases"]))
-        aliases = [a for a in aliases if a != g["key"]]
-
-        alias_text = ""
-        if aliases:
-            alias_preview = ", ".join([html.escape(format_display(a)) for a in aliases[:5]])
-            alias_text = f"\n   🔁 {alias_preview}"
-
+    for t, c in tags[start:end]:
         text_tags_list.append(
-            f"{i+1}. {main_tag}  >> <b>{count} Tag</b>{alias_text}"
+            f"• {html.escape(format_display(t))} ({c})"
         )
 
     text_tags = "\n".join(text_tags_list) or "-"
@@ -545,8 +556,16 @@ async def render_page(update, context, msg_obj):
         math.ceil(len(raw)/per_page)
     )
 
-    msg = f"""📱 {number}
-💬 https://wa.me/{number}
+    msg = f"""☎️ Contact List
+
+    {html.escape(dominant.split('(')[0])} (Primary)
+
+    {text_tags}
+
+    📞 Whatsapp
+    Terdaftar
+    https://wa.me/{number}
+    """
 
 👤 {dominant.split()[0] if dominant != "-" else "-"}
 📊 {len(tags)} tag
