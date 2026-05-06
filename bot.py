@@ -247,6 +247,32 @@ def merge_similar_tags(tags):
 
     return sorted([(g["key"], g["count"]) for g in groups], key=lambda x: x[1], reverse=True)
 
+def merge_with_alias(tags):
+    groups = []
+
+    for tag, count in tags:
+        found = False
+
+        for g in groups:
+            if is_similar_name(tag, g["key"]):
+                g["count"] += count
+                g["aliases"].append(tag)
+                found = True
+                break
+
+        if not found:
+            groups.append({
+                "key": tag,
+                "count": count,
+                "aliases": [tag]
+            })
+
+    return sorted(
+        groups,
+        key=lambda x: x["count"],
+        reverse=True
+    )
+
 
 # ================= FORMAT =================
 def format_display(tag):
