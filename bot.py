@@ -166,6 +166,7 @@ async def get_gcontact(number):
                 print("NUMBER:", number)
                 print("RESPONSE:", data)
                 print("TAGS RAW:", data.get("data", {}).get("getcontact", {}).get("tags"))
+                print("PICTURE:", picture)
 
                 if data.get("success") and data.get("data"):
                     return data
@@ -474,6 +475,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 🔁 Cache / API
         cached = get_cache(number)
         data = cached if cached else await get_gcontact(number)
+        picture = data.get("data", {}).get("getcontact", {}).get("picture")
 
         if not data:
             return await loading.edit_text("⚠️ API error")
@@ -508,6 +510,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["groups"] = []
         context.user_data["raw"] = raw_list
         context.user_data["number"] = number
+        context.user_data["picture"] = picture
 
         # 🖥 Render
         await render_page(update, context, loading)
@@ -517,6 +520,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         release_lock(number)
 
 # ================= RENDER =================
+    picture = context.user_data.get("picture")
 async def render_page(update, context, msg_obj):
     tags = context.user_data["tags"]
     number = context.user_data["number"]
@@ -525,7 +529,7 @@ async def render_page(update, context, msg_obj):
 
     # format list
     lines = [
-        f"• {format_display(t)} ({c})"
+        f"• {html.escape(format_display(t))} <b>({c})</b>"
         for t, c in tags
     ]
 
@@ -536,24 +540,38 @@ async def render_page(update, context, msg_obj):
         for i in range(0, len(lines), MAX_LINES)
     ]
 
+    if picture:
+        try:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=picture,
+                caption="👤 Profile Photo"
+            )
+        except:
+            pass
+
     # HEADER
     await msg_obj.edit_text(
-        f"""☎️ Contact List
+        f"""☎️ <b>Contact List</b>
 
-{html.escape(dominant.split('(')[0])} (Primary)
+    👤 <b>{html.escape(dominant.split('(')[0])}</b> (Primary)
 
-📞 Whatsapp
-https://wa.me/{number}
-"""
+    📞 <b>Whatsapp</b>
+    Terdaftar
+    <a href="https://wa.me/{number}">https://wa.me/{number}</a>
+    """,
+        parse_mode="HTML",
+        disable_web_page_preview=True
     )
 
     # LIST
-    for i, chunk in enumerate(chunks, start=1):
-        text = f"📄 Bagian {i}\n\n" + "\n".join(chunk)
+    for chunk in chunks:
+        text = "📌 <b>Tag List</b>\n\n" + "\n".join(chunk)
 
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=text
+            parse_mode="HTML"
         )
         
 # ================= START =================
