@@ -570,7 +570,7 @@ async def render_page(update, context, msg_obj):
 
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=text
+            text=text,
             parse_mode="HTML"
         )
         
