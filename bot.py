@@ -88,24 +88,24 @@ STOPWORDS = [
 def is_human_name(text):
     words = text.lower().split()
 
-    # ❌ buang kalau ada kata bisnis / lokasi
+    # buang keyword bisnis
     for w in words:
         if w in STOPWORDS:
             return False
 
-    # ❌ buang kalau terlalu panjang (biasanya bukan nama)
+    # minimal 2 kata (nama manusia)
+    if len(words) < 2:
+        return False
+
+    # max 3 kata (biar bukan kalimat)
     if len(words) > 3:
         return False
 
-    # ❌ buang kalau ada angka / simbol aneh
+    # buang angka
     if any(char.isdigit() for char in text):
         return False
 
-    # ✅ minimal 2 kata lebih valid (nama manusia)
-    if len(words) >= 2:
-        return True
-
-    return False
+    return True
     
 def format_number(text):
     number = re.sub(r"\D", "", text)
@@ -338,40 +338,23 @@ def format_display(tag):
 
 # ================= ANALYZE =================
 def analyze_tags(tags):
-
-    # cari nama manusia dulu
-    dominant = None
-    dominant_count = 0
+    best = None
+    best_score = 0
 
     for t, c in tags:
+        score = c
+
         if is_human_name(t):
-            dominant = t
-            dominant_count = c
-            break
+            score += 20
 
-    # fallback kalau tidak ketemu
-    if not dominant:
-        dominant = tags[0][0]
-        dominant_count = tags[0][1]
+        if score > best_score:
+            best = t
+            best_score = score
 
-    alias = []
-    for t, _ in tags[1:10]:
-        if len(t.split()) == 1:
-            alias.append(t)
+    dominant = best if best else tags[0][0]
+    dominant_count = dict(tags).get(dominant, 1)
 
-    alias = " / ".join(set(alias)) if alias else "-"
-
-    lokasi = "-"
-    lokasi_list = ["jakarta", "bengkulu", "bandung", "surabaya", "medan"]
-
-    for t, _ in tags:
-        for loc in lokasi_list:
-            if loc in t:
-                lokasi = loc.title()
-                break
-
-    return f"{format_display(dominant)} ({dominant_count})", alias.title(), lokasi
-
+    return f"{format_display(dominant)} ({dominant_count})", "-", "-"
 
 # ================= MENU =================
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -539,7 +522,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
            # 🔥 boost kalau nama manusia
             if is_human_name(text):
-                score += 5
+                score += 20
 
             return -score, text
 
@@ -589,12 +572,10 @@ async def render_page(update, context, msg_obj):
 
     dominant_name = dominant.split(" (")[0].lower()
 
-    wa_block = f"""
-    📱 <b>Whatsapp</b> 〞
+    wa_block = f"""📱 <b>Whatsapp</b> 〞
 
-    🟢 Terdaftar
-    <a href="https://wa.me/{number}">{number}</a>
-    """
+    🟢 <b>Terdaftar</b>
+    <a href="https://wa.me/{number}">{number}</a>"""
 
     # HEADER
     await msg_obj.edit_text(
@@ -603,7 +584,8 @@ async def render_page(update, context, msg_obj):
     👤 <b>{html.escape(dominant.split('(')[0])}</b>
     <i>Primary Name</i>
 
-    ──────────────
+    ━━━━━━━━━━━━━━
+
     {wa_block}
     """,
         parse_mode="HTML",
@@ -612,13 +594,14 @@ async def render_page(update, context, msg_obj):
 
     # TAG LIST
     lines = []
+
     for t, c in tags:
         name = format_display(t)
 
         if t.lower() == dominant_name:
-            line = f"⭐ <b>{html.escape(name)}</b> <b>({c})</b>"
+            line = f"⭐ <b>{html.escape(name)}</b> <code>({c})</code>"
         else:
-            line = f"• {html.escape(name)} ({c})"
+            line = f"• {html.escape(name)} <code>({c})</code>"
 
         lines.append(line)
 
@@ -640,10 +623,8 @@ async def render_page(update, context, msg_obj):
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=gc_picture,
-                caption=f"""📇 <b>GetContact Profile</b>
-
-                👤 {html.escape(dominant.split('(')[0])}
-                """
+                caption=f"📇 <b>GetContact Profile</b>",
+                parse_mode="HTML"
             )
         except Exception as e:
             print("GC ERROR:", e)
@@ -653,10 +634,8 @@ async def render_page(update, context, msg_obj):
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=wa_picture,
-                caption=f"""📱 <b>WhatsApp Profile</b>
-
-                👤 {html.escape(dominant.split('(')[0])}
-                """
+                caption=f"📱 <b>WhatsApp Profile</b>",
+                parse_mode="HTML"
             )
         except Exception as e:
             print("WA ERROR:", e)
