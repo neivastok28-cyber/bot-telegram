@@ -293,24 +293,44 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     user_id = update.effective_user.id
 
+    # 🔐 Safe ambil data (biar gak error kalau redis mati)
+    try:
+        quota = get_quota(user_id)
+        usage = get_usage(user_id)
+    except:
+        quota = 0
+        usage = 0
+
     if q.data == "back":
-        return await q.edit_message_text("🤖 MENU UTAMA", reply_markup=main_menu(user_id))
+        return await q.edit_message_text(
+            f"🤖 MENU UTAMA\n\n🎟 Quota: {quota}\n📊 Usage: {usage}",
+            reply_markup=main_menu(user_id)
+        )
 
     if q.data == "check":
         return await q.edit_message_text("📱 Kirim nomor")
 
     if q.data == "quota":
-        return await q.edit_message_text(f"🎟 Sisa Quota: {get_quota(user_id)}", reply_markup=back_button())
+        return await q.edit_message_text(
+            f"🎟 Sisa Quota: {quota}",
+            reply_markup=back_button()
+        )
 
     if q.data == "profile":
         return await q.edit_message_text(
-            f"👤 PROFILE\n\nID: {user_id}\n🎟 {get_quota(user_id)}\n📊 {get_usage(user_id)}",
+            f"👤 PROFILE\n\n"
+            f"ID: {user_id}\n"
+            f"🎟 Quota: {quota}\n"
+            f"📊 Usage: {usage}",
             reply_markup=back_button()
         )
 
     if q.data == "dashboard":
         total_users = len(r.keys("quota:*")) if r else 0
-        return await q.edit_message_text(f"📊 DASHBOARD\nUsers: {total_users}", reply_markup=back_button())
+        return await q.edit_message_text(
+            f"📊 DASHBOARD\nUsers: {total_users}",
+            reply_markup=back_button()
+        )
 
     if q.data == "history":
         raw = r.lrange(f"history:{user_id}", 0, 10) if r else []
@@ -327,7 +347,9 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data == "admin":
         return await q.edit_message_text(
-            "⚙️ ADMIN PANEL\n/addquota <id> <jumlah>\n/setquota <id> <jumlah>",
+            "⚙️ ADMIN PANEL\n"
+            "/addquota <id> <jumlah>\n"
+            "/setquota <id> <jumlah>",
             reply_markup=back_button()
         )
 
