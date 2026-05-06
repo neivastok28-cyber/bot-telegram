@@ -169,8 +169,7 @@ async def get_gcontact(number):
                 print("TOKEN:", token)
                 print("NUMBER:", number)
                 print("RESPONSE:", data)
-                
-                tags = data.get("data", {}).get("getcontact", {}).get("tags")
+                print("TAGS RAW:", data.get("data", {}).get("getcontact", {}).get("tags"))
 
                 if data.get("success") and data.get("data"):
                     return data
@@ -206,14 +205,17 @@ def normalize_tag(text):
 
 def extract_tags(data):
     tags_raw = data.get("data", {}).get("getcontact", {}).get("tags", [])
+    
     cleaned = []
 
     for t in tags_raw:
         val = t.get("value")
+        count = t.get("count", 1).
+        
         if val:
-            cleaned.append(normalize_tag(val))
+            cleaned.extend([normalize_tag(val)] * count)
 
-    return sorted(Counter(cleaned).items(), key=lambda x: x[1], reverse=True)
+    return Counter(cleaned).most_common()
 
 
 # ================= SIMILAR =================
@@ -480,7 +482,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = cached if cached else await get_gcontact(number)
 
         if not data:
-            return await loading.edit_text("⚠️ data kosong / API limit")
+            return await loading.edit_text("⚠️ API error")
 
         if not cached:
             set_cache(number, data)
