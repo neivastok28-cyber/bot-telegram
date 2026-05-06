@@ -80,6 +80,24 @@ def main_menu(user_id):
 
 
 # ================= HELPER =================
+STOPWORDS = [
+    "mobil","motor","jual","toko","shop","akun",
+    "bisnis","sales","showroom","pt","cv","admin","wa"
+]
+def is_human_name(text):
+    words = text.lower().split()
+
+    # buang keyword bisnis
+    for w in words:
+        if w in STOPWORDS:
+            return False
+
+    # nama biasanya 1–3 kata
+    if 1 <= len(words) <= 3:
+        return True
+
+    return False
+    
 def format_number(text):
     number = re.sub(r"\D", "", text)
     if number.startswith("0"):
@@ -312,8 +330,20 @@ def format_display(tag):
 # ================= ANALYZE =================
 def analyze_tags(tags):
 
-    dominant = tags[0][0]
-    dominant_count = tags[0][1]
+    # cari nama manusia dulu
+    dominant = None
+    dominant_count = 0
+
+    for t, c in tags:
+        if is_human_name(t):
+            dominant = t
+            dominant_count = c
+            break
+
+    # fallback kalau tidak ketemu
+    if not dominant:
+        dominant = tags[0][0]
+        dominant_count = tags[0][1]
 
     alias = []
     for t, _ in tags[1:10]:
@@ -469,7 +499,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("⏳ Nomor sedang diproses...")
 
     # 🔎 Loading
-    loading = await update.message.reply_text("🔎 mencari...")
+    loading = await update.message.reply_text(
+        f"🔎 Mencari:\n<code>{number}</code>",
+        parse_mode="HTML",
+        reply_to_message_id=update.message.message_id
+    )
 
     try:
         # 🔁 Cache / API
@@ -523,7 +557,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= RENDER =================
 async def render_page(update, context, msg_obj):
-    gc_picture = context.user_data.get("gc_picture")
+    gc_picture = context.user_data.get("gc_picture", None)
     wa_picture = context.user_data.get("wa_picture", None)
     tags = context.user_data["tags"]
     number = context.user_data["number"]
@@ -531,10 +565,17 @@ async def render_page(update, context, msg_obj):
     dominant, alias, lokasi = analyze_tags(tags)
 
     # format list
-    lines = [
-        f"• {html.escape(format_display(t))} <b>({c})</b>"
-        for t, c in tags
-    ]
+    lines = []
+
+    for t, c in tags:
+        name = format_display(t)
+
+        if t == dominant:
+            line = f"⭐ <b>{html.escape(name)}</b> <b>({c})</b>"
+        else:
+            line = f"• {html.escape(name)} ({c})"
+
+        lines.append(line)
 
     MAX_LINES = 85
 
@@ -579,6 +620,27 @@ async def render_page(update, context, msg_obj):
 
     # LIST
     for chunk in chunks:
+        # ================= FOTO PALING AKHIR =================
+if gc_picture:
+    try:
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=gc_picture,
+            caption="📇 GetContact Photo"
+        )
+    except Exception as e:
+        print("GC ERROR:", e)
+
+if wa_picture:
+    try:
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=wa_picture,
+            caption="📱 WhatsApp Profile"
+        )
+    except Exception as e:
+        print("WA ERROR:", e)
+        
         text = "📌 <b>Tag List</b>\n\n" + "\n".join(chunk)
 
         await context.bot.send_message(
