@@ -4,6 +4,7 @@ import re
 import json
 import asyncio
 import html
+import math
 from collections import Counter
 from io import BytesIO
 
@@ -45,7 +46,6 @@ def main_menu(user_id):
             InlineKeyboardButton("📜 History", callback_data="history"),
             InlineKeyboardButton("📥 Export", callback_data="export"),
         ],
-        [InlineKeyboardButton("🎟 Quota", callback_data="quota")],
         [InlineKeyboardButton("🗑 Clear", callback_data="clear")],
     ]
 
@@ -103,6 +103,19 @@ def get_usage(user_id):
     return int(r.get(f"usage:{user_id}") or 0) if r else 0
 
 
+# ================= CACHE =================
+def get_cache(number):
+    if not r:
+        return None
+    data = r.get(f"cache:{number}")
+    return json.loads(data) if data else None
+
+
+def set_cache(number, data):
+    if r:
+        r.setex(f"cache:{number}", 21600, json.dumps(data))
+
+
 # ================= API =================
 async def get_gcontact(number):
     url = f"https://gcontact.id/api?token={GC_TOKEN}&nomor={number}"
@@ -129,45 +142,70 @@ def normalize_tag(text):
     text = re.sub(r"[^a-z0-9\s]", "", text)
     text = re.sub(r"(.)\1+", r"\1", text)
     text = re.sub(r"\s+", " ", text).strip()
-    return text
+
+    words = text.split()
+    clean = []
+
+    for w in words:
+        if w.startswith("bg"):
+            clean.append("bg")
+        elif w.startswith("bang"):
+            clean.append("bang")
+        else:
+            clean.append(w)
+
+    return " ".join(clean)
 
 
 def extract_tags(data):
-    try:
-        tags_raw = data.get("data", {}).get("getcontact", {}).get("tags", [])
-        cleaned = []
+    tags_raw = data.get("data", {}).get("getcontact", {}).get("tags", [])
+    cleaned = []
 
-        for t in tags_raw:
-            val = t.get("value")
-            if val:
-                cleaned.append(normalize_tag(val))
+    for t in tags_raw:
+        val = t.get("value")
+        if val:
+            cleaned.append(normalize_tag(val))
 
-        return sorted(Counter(cleaned).items(), key=lambda x: x[1], reverse=True)
-    except:
-        return []
+    return sorted(Counter(cleaned).items(), key=lambda x: x[1], reverse=True)
 
 
-# ================= MERGE =================
-def is_base_name(tag):
-    return len(tag.split()) == 1
-
-
-def is_similar_name(a, b):
-    if not is_base_name(a) or not is_base_name(b):
-        return False
-
+# ================= SIMILAR =================
+def similarity_word(a, b):
     if a == b:
         return True
 
-    if abs(len(a) - len(b)) <= 1:
+    if abs(len(a) - len(b)) <= 2:
         diff = sum(1 for x, y in zip(a, b) if x != y)
-        if diff <= 1:
+        if diff <= 2:
             return True
 
     if a in b or b in a:
         return True
 
     return False
+
+
+def is_similar_name(a, b):
+    a_words = a.split()
+    b_words = b.split()
+
+    if not a_words or not b_words:
+        return False
+
+    # prefix harus sama
+    if a_words[0] in ["bg", "bang"] and b_words[0] in ["bg", "bang"]:
+        if a_words[0] != b_words[0]:
+            return False
+
+    same = 0
+
+    for aw in a_words:
+        for bw in b_words:
+            if similarity_word(aw, bw):
+                same += 1
+                break
+
+    return same >= max(1, int(min(len(a_words), len(b_words)) * 0.7))
 
 
 def merge_similar_tags(tags):
@@ -188,28 +226,34 @@ def merge_similar_tags(tags):
     return sorted([(g["key"], g["count"]) for g in groups], key=lambda x: x[1], reverse=True)
 
 
-# ================= ANALYZER (FIXED DOMINAN WORD) =================
+# ================= FORMAT =================
+def format_display(tag):
+    words = tag.split()
+
+    if words[0] == "bg":
+        return "Bg " + " ".join(w.title() for w in words[1:])
+    if words[0] == "bang":
+        return "Bang " + " ".join(w.title() for w in words[1:])
+
+    return " ".join(w.title() for w in words)
+
+
+# ================= ANALYZE =================
 def analyze_tags(tags):
     if not tags:
         return "-", "-", "-"
 
-    word_counter = Counter()
-
-    for tag, count in tags:
-        for w in tag.split():
-            if len(w) >= 3:
-                word_counter[w] += count
-
-    dominant_word, dominant_count = word_counter.most_common(1)[0]
+    dominant = tags[0][0]
+    dominant_count = tags[0][1]
 
     alias = []
-    for t, _ in tags:
-        if is_base_name(t) and t != dominant_word:
+    for t, _ in tags[1:10]:
+        if len(t.split()) == 1:
             alias.append(t)
 
     alias = " / ".join(set(alias)) if alias else "-"
 
-    lokasi_list = ["jakarta", "bengkulu", "bandung", "surabaya", "medan", "jambi"]
+    lokasi_list = ["jakarta", "bengkulu", "bandung", "surabaya", "medan"]
     lokasi = "-"
 
     for t, _ in tags:
@@ -218,7 +262,7 @@ def analyze_tags(tags):
                 lokasi = loc.title()
                 break
 
-    return f"{dominant_word.title()} ({dominant_count})", alias.title(), lokasi
+    return f"{format_display(dominant)} ({dominant_count})", alias.title(), lokasi
 
 
 # ================= START =================
@@ -238,12 +282,9 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "check":
         return await q.edit_message_text("📱 Kirim nomor")
 
-    if q.data == "quota":
-        return await q.edit_message_text(f"🎟 Sisa Quota: {get_quota(user_id)}", reply_markup=back_button())
-
     if q.data == "profile":
         return await q.edit_message_text(
-            f"👤 PROFILE\n\nID: {user_id}\n🎟 Quota: {get_quota(user_id)}\n📊 Usage: {get_usage(user_id)}",
+            f"👤 PROFILE\n\nID: {user_id}\n🎟 {get_quota(user_id)}\n📊 {get_usage(user_id)}",
             reply_markup=back_button()
         )
 
@@ -268,7 +309,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data == "admin":
         return await q.edit_message_text(
-            "⚙️ ADMIN PANEL\n\n/addquota <id> <jumlah>\n/setquota <id> <jumlah>",
+            "⚙️ ADMIN PANEL\n/addquota <id> <jumlah>\n/setquota <id> <jumlah>",
             reply_markup=back_button()
         )
 
@@ -335,9 +376,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     loading = await update.message.reply_text("🔎 mencari...")
 
-    data = await get_gcontact(number)
+    cached = get_cache(number)
+    data = cached if cached else await get_gcontact(number)
+
     if not data:
         return await loading.edit_text("❌ tidak ditemukan")
+
+    if not cached:
+        set_cache(number, data)
 
     add_usage(user_id)
 
@@ -346,15 +392,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     dominant, alias, lokasi = analyze_tags(tags)
 
+    # pagination
+    per_page = 50
+    page = context.user_data.get("page", 0)
+
+    start = page * per_page
+    end = start + per_page
+
+    page_tags = tags[start:end]
+
     text_tags = "\n".join([
-        f"{i+1}. {t.title()}  >> <b>{c} Tag</b>"
-        for i, (t, c) in enumerate(tags)
+        f"{i+1}. {format_display(t)}  >> <b>{c} Tag</b>"
+        for i, (t, c) in enumerate(page_tags, start=start)
     ])
+
+    total_page = math.ceil(len(tags) / per_page)
 
     msg = f"""📱 {number}
 💬 https://wa.me/{number}
 
-👤 {dominant.split()[0].title()}
+👤 {dominant.split()[0]}
 📊 {len(tags)} tag
 🎟 Sisa Quota: {get_quota(user_id)}
 
@@ -362,12 +419,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ⚠️ Alias: {alias}
 📍 Lokasi: {lokasi}
 
+📄 Page {page+1}/{total_page}
+
 🏷 Semua Tag:
 
 {text_tags}
 """
 
-    await loading.edit_text(msg, parse_mode="HTML")
+    buttons = []
+    if start > 0:
+        buttons.append(InlineKeyboardButton("⬅️", callback_data="prev"))
+    if end < len(tags):
+        buttons.append(InlineKeyboardButton("➡️", callback_data="next"))
+
+    markup = InlineKeyboardMarkup([buttons]) if buttons else None
+
+    context.user_data["tags"] = tags
+    context.user_data["number"] = number
+    context.user_data["dominant"] = dominant
+
+    await loading.edit_text(msg, parse_mode="HTML", reply_markup=markup)
+
+
+# ================= PAGINATION =================
+async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if q.data == "next":
+        context.user_data["page"] += 1
+    else:
+        context.user_data["page"] -= 1
+
+    await handle_message(update, context)
 
 
 # ================= INIT =================
@@ -385,9 +469,11 @@ def main():
     app.add_handler(CommandHandler("addquota", addquota_cmd))
 
     app.add_handler(CallbackQueryHandler(menu))
+    app.add_handler(CallbackQueryHandler(pagination, pattern="^(next|prev)$"))
+
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 BOT FINAL SUPER PERFECT")
+    print("🚀 BOT FINAL ULTRA PERFECT")
     app.run_polling()
 
 
