@@ -45,6 +45,7 @@ def main_menu(user_id):
             InlineKeyboardButton("📜 History", callback_data="history"),
             InlineKeyboardButton("📥 Export", callback_data="export"),
         ],
+        [InlineKeyboardButton("🎟 Quota", callback_data="quota")],
         [InlineKeyboardButton("🗑 Clear", callback_data="clear")],
     ]
 
@@ -231,6 +232,9 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "check":
         return await q.edit_message_text("📱 Kirim nomor")
 
+    if q.data == "quota":
+        return await q.edit_message_text(f"🎟 Sisa Quota: {get_quota(user_id)}", reply_markup=back_button())
+
     if q.data == "profile":
         return await q.edit_message_text(
             f"👤 PROFILE\n\nID: {user_id}\n🎟 Quota: {get_quota(user_id)}\n📊 Usage: {get_usage(user_id)}",
@@ -377,7 +381,7 @@ def main():
     app.add_handler(CallbackQueryHandler(menu))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 BOT FINAL FULL MENU")
+    print("🚀 BOT FINAL FULL FITUR")
     app.run_polling()
 
 
