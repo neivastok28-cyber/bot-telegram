@@ -82,18 +82,27 @@ def main_menu(user_id):
 # ================= HELPER =================
 STOPWORDS = [
     "mobil","motor","jual","toko","shop","akun",
-    "bisnis","sales","showroom","pt","cv","admin","wa"
+    "bisnis","sales","showroom","pt","cv","admin","wa",
+    "bekasi","jakarta","bandung","surabaya","medan"
 ]
 def is_human_name(text):
     words = text.lower().split()
 
-    # buang keyword bisnis
+    # ❌ buang kalau ada kata bisnis / lokasi
     for w in words:
         if w in STOPWORDS:
             return False
 
-    # nama biasanya 1–3 kata
-    if 1 <= len(words) <= 3:
+    # ❌ buang kalau terlalu panjang (biasanya bukan nama)
+    if len(words) > 3:
+        return False
+
+    # ❌ buang kalau ada angka / simbol aneh
+    if any(char.isdigit() for char in text):
+        return False
+
+    # ✅ minimal 2 kata lebih valid (nama manusia)
+    if len(words) >= 2:
         return True
 
     return False
@@ -523,7 +532,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 🏷 Tag processing
         tags_raw_counter = extract_tags(data)
-        tags = sorted(tags_raw_counter, key=lambda x: (-x[1], x[0]))
+        def tag_score(item):
+            text, count = item
+
+            score = count
+
+           # 🔥 boost kalau nama manusia
+            if is_human_name(text):
+                score += 5
+
+            return -score, text
+
+        tags = sorted(tags_raw_counter, key=tag_score)
         groups = []
 
         raw_list = []
@@ -567,16 +587,25 @@ async def render_page(update, context, msg_obj):
 
     dominant, alias, lokasi = analyze_tags(tags)
 
+    dominant_name = dominant.split(" (")[0].lower()
+
+    wa_block = f"""
+    📱 <b>Whatsapp</b> 〞
+
+    🟢 Terdaftar
+    <a href="https://wa.me/{number}">{number}</a>
+    """
+
     # HEADER
     await msg_obj.edit_text(
-        f"""☎️ <b>Contact List</b>
+        f"""📞 <b>Contact List</b>
 
-👤 <b>{html.escape(dominant.split('(')[0])}</b> (Primary)
+    👤 <b>{html.escape(dominant.split('(')[0])}</b>
+    <i>Primary Name</i>
 
-📞 <b>Whatsapp</b>
-Terdaftar
-<a href="https://wa.me/{number}">{number}</a>
-""",
+    ──────────────
+    {wa_block}
+    """,
         parse_mode="HTML",
         disable_web_page_preview=True
     )
@@ -586,7 +615,7 @@ Terdaftar
     for t, c in tags:
         name = format_display(t)
 
-        if t == dominant:
+        if t.lower() == dominant_name:
             line = f"⭐ <b>{html.escape(name)}</b> <b>({c})</b>"
         else:
             line = f"• {html.escape(name)} ({c})"
@@ -611,7 +640,10 @@ Terdaftar
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=gc_picture,
-                caption="📇 GetContact Photo"
+                caption=f"""📇 <b>GetContact Profile</b>
+
+                👤 {html.escape(dominant.split('(')[0])}
+                """
             )
         except Exception as e:
             print("GC ERROR:", e)
@@ -621,7 +653,10 @@ Terdaftar
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=wa_picture,
-                caption="📱 WhatsApp Profile"
+                caption=f"""📱 <b>WhatsApp Profile</b>
+
+                👤 {html.escape(dominant.split('(')[0])}
+                """
             )
         except Exception as e:
             print("WA ERROR:", e)
