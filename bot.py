@@ -188,22 +188,28 @@ def merge_similar_tags(tags):
     return sorted([(g["key"], g["count"]) for g in groups], key=lambda x: x[1], reverse=True)
 
 
-# ================= ANALYZER =================
+# ================= ANALYZER (FIXED DOMINAN WORD) =================
 def analyze_tags(tags):
     if not tags:
         return "-", "-", "-"
 
-    dominant = tags[0][0]
-    dominant_count = tags[0][1]
+    word_counter = Counter()
+
+    for tag, count in tags:
+        for w in tag.split():
+            if len(w) >= 3:
+                word_counter[w] += count
+
+    dominant_word, dominant_count = word_counter.most_common(1)[0]
 
     alias = []
-    for t, _ in tags[1:10]:
-        if is_base_name(t) and t != dominant:
+    for t, _ in tags:
+        if is_base_name(t) and t != dominant_word:
             alias.append(t)
 
     alias = " / ".join(set(alias)) if alias else "-"
 
-    lokasi_list = ["jakarta", "bengkulu", "bandung", "surabaya", "medan"]
+    lokasi_list = ["jakarta", "bengkulu", "bandung", "surabaya", "medan", "jambi"]
     lokasi = "-"
 
     for t, _ in tags:
@@ -212,7 +218,7 @@ def analyze_tags(tags):
                 lokasi = loc.title()
                 break
 
-    return f"{dominant.title()} ({dominant_count})", alias.title(), lokasi
+    return f"{dominant_word.title()} ({dominant_count})", alias.title(), lokasi
 
 
 # ================= START =================
@@ -381,7 +387,7 @@ def main():
     app.add_handler(CallbackQueryHandler(menu))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 BOT FINAL FULL FITUR")
+    print("🚀 BOT FINAL SUPER PERFECT")
     app.run_polling()
 
 
