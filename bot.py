@@ -509,6 +509,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 🔁 Cache / API
         cached = get_cache(number)
         data = cached if cached else await get_gcontact(number)
+        quota = data.get("info_account", {}).get("remaining_quota", 0)
         gc_picture = data.get("data", {}).get("getcontact", {}).get("picture", None)
         wa_picture = data.get("data", {}).get("whatsapp", {}).get("picture", None)
 
@@ -545,6 +546,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["groups"] = []
         context.user_data["raw"] = raw_list
         context.user_data["number"] = number
+        context.user_data["quota"] = quota
         context.user_data["gc_picture"] = gc_picture
         context.user_data["wa_picture"] = wa_picture
 
@@ -557,6 +559,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= RENDER =================
 async def render_page(update, context, msg_obj):
+    quota = context.user_data.get("quota", 0)
     gc_picture = context.user_data.get("gc_picture", None)
     wa_picture = context.user_data.get("wa_picture", None)
     tags = context.user_data["tags"]
@@ -585,8 +588,7 @@ async def render_page(update, context, msg_obj):
     ]
 
     if gc_picture:
-        try:
-            await context.bot.send_photo(
+        await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=gc_picture,
                 caption="📇 GetContact Photo"
@@ -595,14 +597,20 @@ async def render_page(update, context, msg_obj):
             print("GC PHOTO ERROR:", e)
 
     if wa_picture:
-        try:
-            await context.bot.send_photo(
+        await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=wa_picture,
                 caption="📱 WhatsApp Profile"
             )
         except Exception as e:
             print("WA PHOTO ERROR:", e)
+
+# ================= QUOTA PALING AKHIR =================
+await context.bot.send_message(
+    chat_id=update.effective_chat.id,
+    text=f"⚡ Remaining Quota <b>{quota}</b>",
+    parse_mode="HTML"
+)
 
     # HEADER
     await msg_obj.edit_text(
@@ -627,27 +635,6 @@ async def render_page(update, context, msg_obj):
             text=text,
             parse_mode="HTML"
        )
-        
-# ================= FOTO PALING AKHIR =================
-if gc_picture:
-    try:
-        await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=gc_picture,
-            caption="📇 GetContact Photo"
-        )
-    except Exception as e:
-        print("GC ERROR:", e)
-
-if wa_picture:
-    try:
-        await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=wa_picture,
-            caption="📱 WhatsApp Profile"
-        )
-    except Exception as e:
-        print("WA ERROR:", e)
         
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
