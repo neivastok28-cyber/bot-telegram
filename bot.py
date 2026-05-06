@@ -353,6 +353,32 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_button()
         )
 
+# ================= ADMIN COMMAND =================
+async def setquota_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return await update.message.reply_text("❌ bukan admin")
+
+    try:
+        user_id = int(context.args[0])
+        amount = int(context.args[1])
+        set_quota(user_id, amount)
+        await update.message.reply_text("✅ quota diset")
+    except:
+        await update.message.reply_text("❌ format: /setquota id jumlah")
+
+
+async def addquota_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return await update.message.reply_text("❌ bukan admin")
+
+    try:
+        user_id = int(context.args[0])
+        amount = int(context.args[1])
+        add_quota(user_id, amount)
+        await update.message.reply_text("✅ quota ditambah")
+    except:
+        await update.message.reply_text("❌ format: /addquota id jumlah")
+
 
 # ================= EXPORT =================
 async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -461,12 +487,12 @@ async def render_page(update, context, msg_obj):
     dominant, alias, lokasi = analyze_tags(tags)
 
     text_tags = "\n".join([
-        f"{i+1}. {format_display(t)}  >> <b>{c} Tag</b>"
-        for i, (t, c) in enumerate(filtered_part, start=start)
+        f"{html.escape(format_display(t))}  >> <b>{c} Tag</b>"
+        for i, (t, c) in enumerate(filtered_part, start=1)
     ]) or "-"
 
     text_raw = "\n".join([
-        f"{i+1}. {format_display(t)}"
+        f"{html.escape(format_display(t))}"
         for i, t in enumerate(raw_part, start=start)
     ]) or "-"
 
@@ -537,7 +563,7 @@ async def init(app):
 
 # ================= MAIN =================
 def main():
-    app = ApplicationBuilder().token(TOKEN).post_init(init).build()
+    app = ApplicationBuilder().token(TOKEN).post_init(init).post_shutdown(shutdown).build()
 
     # ================= COMMAND =================
     app.add_handler(CommandHandler("start", start))
