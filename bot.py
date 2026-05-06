@@ -465,7 +465,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 🏷 Tag processing
         tags_raw_counter = extract_tags(data)
-        groups = merge_with_alias(tags_raw_counter) tags = [(g["key"], g["count"]) for g in groups]
+        groups = merge_with_alias(tags_raw_counter) 
+        tags = [(g["key"], g["count"]) for g in groups]
 
         raw_list = []
         for t, c in tags_raw_counter:
