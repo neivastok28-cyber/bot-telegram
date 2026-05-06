@@ -310,8 +310,6 @@ def format_display(tag):
 
 # ================= ANALYZE =================
 def analyze_tags(tags):
-    if not tags:
-        return data  # tetap tampilkan walau minim
 
     dominant = tags[0][0]
     dominant_count = tags[0][1]
@@ -509,7 +507,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["tags"] = tags
         context.user_data["groups"] = []
         context.user_data["raw"] = raw_list
-        context.user_data["page"] = 0
         context.user_data["number"] = number
 
         # 🖥 Render
@@ -521,69 +518,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= RENDER =================
 async def render_page(update, context, msg_obj):
-    user_id = update.effective_user.id
     tags = context.user_data["tags"]
-    groups = context.user_data.get("groups", [])
-    raw = context.user_data["raw"]
     number = context.user_data["number"]
-
-    filtered_part = tags
 
     dominant, alias, lokasi = analyze_tags(tags)
 
-    text_tags_list = []
-
-    for t, c in tags[start:end]:
-        text_tags_list.append(
-            f"• {html.escape(format_display(t))} ({c})"
-        )
-
+    # format list
     lines = [
         f"• {format_display(t)} ({c})"
-        for t, c in filtered_part
+        for t, c in tags
     ]
-    
+
     MAX_LINES = 85
-    
+
     chunks = [
         lines[i:i + MAX_LINES]
         for i in range(0, len(lines), MAX_LINES)
     ]
 
-    text_raw = "\n".join([
-        f"{html.escape(format_display(t))}"
-        for i, t in enumerate(raw_part, start=start)
-    ]) or "-"
-
-    total_page = max(
-        math.ceil(len(tags)/per_page),
-        math.ceil(len(raw)/per_page)
-    )
-
-    msg = f"""☎️ Contact List
-
-    {html.escape(dominant.split('(')[0])} (Primary)
-
-    {text_tags}
-
-    📞 Whatsapp
-    Terdaftar
-    https://wa.me/{number}
-    """
-
-    if len(msg) > 4000:
-        msg = msg[:4000] + "\n\n⚠️ Dipotong"
-
+    # HEADER
     await msg_obj.edit_text(
         f"""☎️ Contact List
 
-        {dominant}
+{html.escape(dominant.split('(')[0])} (Primary)
 
-        📞 Whatsapp
-         https://wa.me/{number}
-        """
-        )
-    
+📞 Whatsapp
+https://wa.me/{number}
+"""
+    )
+
+    # LIST
     for i, chunk in enumerate(chunks, start=1):
         text = f"📄 Bagian {i}\n\n" + "\n".join(chunk)
 
@@ -591,20 +555,7 @@ async def render_page(update, context, msg_obj):
             chat_id=update.effective_chat.id,
             text=text
         )
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=text
-        )
-
-
-# ================= PAGINATION =================
-async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    await render_page(update, context, q.message)
-
-
+        
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 MENU UTAMA", reply_markup=main_menu(update.effective_user.id))
