@@ -355,57 +355,71 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= HANDLE =================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-   if is_rate_limited(user_id):
+
+    # 🔒 Anti spam
+    if is_rate_limited(user_id):
         return await update.message.reply_text("⚠️ Terlalu cepat")
 
+    # 🎟 Cek quota
     if not use_quota(user_id):
         return await update.message.reply_text("❌ quota habis")
 
-number = format_number(update.message.text)
-if not number:
-    return await update.message.reply_text("❌ nomor tidak valid")
+    # 📱 Format nomor
+    number = format_number(update.message.text)
+    if not number:
+        return await update.message.reply_text("❌ nomor tidak valid")
 
-if not acquire_lock(number):
-    return await update.message.reply_text("⏳ Nomor sedang diproses...")
+    # 🔐 Lock biar tidak double request
+    if not acquire_lock(number):
+        return await update.message.reply_text("⏳ Nomor sedang diproses...")
+
+    # 🔎 Loading
     loading = await update.message.reply_text("🔎 mencari...")
 
-try:
-    cached = get_cache(number)
-    data = cached if cached else await get_gcontact(number)
+    try:
+        # 🔁 Cache / API
+        cached = get_cache(number)
+        data = cached if cached else await get_gcontact(number)
 
-    if not data:
-        return await loading.edit_text("❌ tidak ditemukan")
+        if not data:
+            return await loading.edit_text("❌ tidak ditemukan")
 
-    if not cached:
-        set_cache(number, data)
+        if not cached:
+            set_cache(number, data)
 
-    add_usage(user_id)
+        add_usage(user_id)
 
-    tags_raw_counter = extract_tags(data)
-    tags = merge_similar_tags(tags_raw_counter)
+        # 🏷 Tag processing
+        tags_raw_counter = extract_tags(data)
+        tags = merge_similar_tags(tags_raw_counter)
 
-    raw_list = []
-    for t, c in tags_raw_counter:
-        raw_list.extend([t] * c)
+        raw_list = []
+        for t, c in tags_raw_counter:
+            raw_list.extend([t] * c)
 
-    dominant, alias, lokasi = analyze_tags(tags)
+        dominant, alias, lokasi = analyze_tags(tags)
 
-    if r:
-        r.lpush(f"history:{user_id}", json.dumps({
-            "number": number,
-            "name": dominant,
-            "tags": tags
-        }))
-        r.ltrim(f"history:{user_id}", 0, 50)
+        # 📜 History
+        if r:
+            r.lpush(f"history:{user_id}", json.dumps({
+                "number": number,
+                "name": dominant,
+                "tags": tags
+            }))
+            r.ltrim(f"history:{user_id}", 0, 50)
 
-    context.user_data["tags"] = tags
-    context.user_data["raw"] = raw_list
-    context.user_data["page"] = 0
-    context.user_data["number"] = number
+        # 💾 Simpan ke session
+        context.user_data["tags"] = tags
+        context.user_data["raw"] = raw_list
+        context.user_data["page"] = 0
+        context.user_data["number"] = number
 
-    await render_page(update, context, loading)
-finally:
-    release_lock(number)
+        # 🖥 Render
+        await render_page(update, context, loading)
+
+    finally:
+        # 🔓 WAJIB → biar bot tidak freeze
+        release_lock(number)
 
 # ================= RENDER =================
 async def render_page(update, context, msg_obj):
