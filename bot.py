@@ -4,7 +4,6 @@ import re
 import json
 import asyncio
 import html
-import math
 from collections import Counter
 
 import aiohttp
@@ -139,7 +138,7 @@ def extract_tags(data):
         return []
 
 
-# ================= SMART MERGE =================
+# ================= MERGE =================
 def is_base_name(tag):
     return len(tag.split()) == 1
 
@@ -250,15 +249,12 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# ================= ADMIN COMMAND =================
+# ================= ADMIN =================
 async def setquota_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    uid = int(context.args[0])
-    amt = int(context.args[1])
-    set_quota(uid, amt)
-
+    set_quota(int(context.args[0]), int(context.args[1]))
     await update.message.reply_text("✅ quota diset")
 
 
@@ -266,10 +262,7 @@ async def addquota_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    uid = int(context.args[0])
-    amt = int(context.args[1])
-    add_quota(uid, amt)
-
+    add_quota(int(context.args[0]), int(context.args[1]))
     await update.message.reply_text("✅ quota ditambah")
 
 
@@ -298,7 +291,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dominant, alias, lokasi = analyze_tags(tags)
 
     text_tags = "\n".join([
-        f"{i+1}. {t.title()} >> {c} Tag"
+        f"{i+1}. {t.title()}  >> <b>{c} Tag</b>"
         for i, (t, c) in enumerate(tags)
     ])
 
@@ -318,7 +311,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 {text_tags}
 """
 
-    await loading.edit_text(msg)
+    await loading.edit_text(msg, parse_mode="HTML")
 
 
 # ================= INIT =================
@@ -338,7 +331,7 @@ def main():
     app.add_handler(CallbackQueryHandler(menu))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 BOT FINAL + ADMIN PANEL RUNNING")
+    print("🚀 BOT FINAL PERFECT")
     app.run_polling()
 
 
