@@ -520,8 +520,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         release_lock(number)
 
 # ================= RENDER =================
-    picture = context.user_data.get("picture")
 async def render_page(update, context, msg_obj):
+    picture = context.user_data.get("picture")
     tags = context.user_data["tags"]
     number = context.user_data["number"]
 
