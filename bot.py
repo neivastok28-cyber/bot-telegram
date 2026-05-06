@@ -465,7 +465,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 🏷 Tag processing
         tags_raw_counter = extract_tags(data)
-        tags = merge_similar_tags(tags_raw_counter)
+        groups = merge_with_alias(tags_raw_counter) tags = [(g["key"], g["count"]) for g in groups]
 
         raw_list = []
         for t, c in tags_raw_counter:
@@ -484,6 +484,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 💾 Simpan ke session
         context.user_data["tags"] = tags
+        context.user_data["groups"] = groups
         context.user_data["raw"] = raw_list
         context.user_data["page"] = 0
         context.user_data["number"] = number
@@ -499,6 +500,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def render_page(update, context, msg_obj):
     user_id = update.effective_user.id
     tags = context.user_data["tags"]
+    groups = context.user_data.get("groups", [])
     raw = context.user_data["raw"]
     page = context.user_data["page"]
     number = context.user_data["number"]
@@ -512,10 +514,25 @@ async def render_page(update, context, msg_obj):
 
     dominant, alias, lokasi = analyze_tags(tags)
 
-    text_tags = "\n".join([
-        f"{html.escape(format_display(t))}  >> <b>{c} Tag</b>"
-        for i, (t, c) in enumerate(filtered_part, start=start)
-    ]) or "-"
+    text_tags_list = []
+    
+    for i, g in enumerate(groups[start:end], start=start):
+        main_tag = html.escape(format_display(g["key"]))
+        count = g["count"]
+
+        aliases = list(set(g["aliases"]))
+        aliases = [a for a in aliases if a != g["key"]]
+
+        alias_text = ""
+        if aliases:
+            alias_preview = ", ".join([html.escape(format_display(a)) for a in aliases[:5]])
+            alias_text = f"\n   🔁 {alias_preview}"
+
+        text_tags_list.append(
+            f"{i+1}. {main_tag}  >> <b>{count} Tag</b>{alias_text}"
+        )
+
+    text_tags = "\n".join(text_tags_list) or "-"
 
     text_raw = "\n".join([
         f"{html.escape(format_display(t))}"
