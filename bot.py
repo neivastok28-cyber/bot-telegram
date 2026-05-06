@@ -528,7 +528,6 @@ async def render_page(update, context, msg_obj):
     number = context.user_data["number"]
 
     filtered_part = tags
-    raw_part = raw[start:end]
 
     dominant, alias, lokasi = analyze_tags(tags)
 
@@ -543,7 +542,9 @@ async def render_page(update, context, msg_obj):
         f"• {format_display(t)} ({c})"
         for t, c in filtered_part
     ]
+    
     MAX_LINES = 85
+    
     chunks = [
         lines[i:i + MAX_LINES]
         for i in range(0, len(lines), MAX_LINES)
@@ -582,6 +583,7 @@ async def render_page(update, context, msg_obj):
          https://wa.me/{number}
         """
         )
+    
     for i, chunk in enumerate(chunks, start=1):
         text = f"📄 Bagian {i}\n\n" + "\n".join(chunk)
 
@@ -599,11 +601,6 @@ async def render_page(update, context, msg_obj):
 async def pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-
-    if q.data == "next":
-        context.user_data["page"] += 1
-    else:
-        context.user_data["page"] -= 1
 
     await render_page(update, context, q.message)
 
