@@ -504,6 +504,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         quota = data.get("info_account", {}).get("remaining_quota", 0)
         gc_picture = data.get("data", {}).get("getcontact", {}).get("picture", None)
         wa_picture = data.get("data", {}).get("whatsapp", {}).get("picture", None)
+        primary_name = data.get("data", {}).get("getcontact", {}).get("primary", None)
 
         if not data:
             return await loading.edit_text("⚠️ API error")
@@ -526,7 +527,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return -score, text
 
-        tags = sorted(tags_raw_counter, key=tag_score)
+        tags = sorted(tags_raw_counter, key=lambda x: (-x[1], x[0]))
         groups = []
 
         raw_list = []
@@ -549,6 +550,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["groups"] = []
         context.user_data["raw"] = raw_list
         context.user_data["number"] = number
+        context.user_data["primary_name"] = primary_name
         context.user_data["quota"] = quota
         context.user_data["gc_picture"] = gc_picture
         context.user_data["wa_picture"] = wa_picture
@@ -562,22 +564,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= RENDER =================
 async def render_page(update, context, msg_obj):
+    primary_name = context.user_data.get("primary_name")
     quota = context.user_data.get("quota", 0)
     gc_picture = context.user_data.get("gc_picture", None)
     wa_picture = context.user_data.get("wa_picture", None)
     tags = context.user_data["tags"]
     number = context.user_data["number"]
-
+    
+    # ambil dominant dari tag
     dominant, alias, lokasi = analyze_tags(tags)
 
-    dominant_name = dominant.split(" (")[0].lower()
+    # ambil count aman
+    count = dominant.split("(")[-1].replace(")", "").strip()
 
+    # 🔥 PRIORITAS API
+    if primary_name:
+        dominant = f"{primary_name} ({count})"
+        dominant_name = primary_name.lower()
+    else:
+        dominant_name = dominant.split(" (")[0].lower()
+
+    # ambil nama bersih
+    display_name = dominant.split("(")[0].strip()
+    
+    # WA BLOCK (TANPA INDENT)
     wa_block = f"""📱 <b>Whatsapp</b> 〞
 
-    🟢 <b>Terdaftar</b>
-    <a href="https://wa.me/{number}">{number}</a>"""
+🟢 <b>Terdaftar</b>
+<a href="https://wa.me/{number}">{number}</a>"""
 
-    # HEADER
+    # HEADER (TANPA INDENT)
     await msg_obj.edit_text(
         f"""📞 <b>Contact List</b>
 
