@@ -377,8 +377,11 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         usage = 0
 
     if q.data == "back":
-        return await menu(update, context)
-
+        return await q.edit_message_text(
+            "🤖 MENU UTAMA",
+            reply_markup=main_menu(update.effective_user.id)
+        ).
+        
     if q.data == "check":
         return await q.edit_message_text("📱 Kirim nomor")
 
@@ -416,15 +419,15 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         user_id = update.effective_user.id
 
-        data = r.lrange(f"history:{user_id}", 0, 20)
+        data = r.lrange(f"history:{user_id}", 0, 20) if r else []
 
         if not data:
-        return await q.edit_message_text(
+            return await q.edit_message_text(
             "🪵 History kosong",
             reply_markup=back_button()
         )
 
-        text = "🪵 HISTORY\n\n".
+        text = "🪵 HISTORY\n\n"
 
         for item in data:
             d = json.loads(item)
@@ -439,7 +442,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         user_id = update.effective_user.id
 
-        data = r.lrange(f"history:{user_id}", 0, 100)
+        data = r.lrange(f"history:{user_id}", 0, 100) if r else []
 
         if not data:
             return await q.answer("History kosong")
@@ -473,7 +476,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data == "admin":
     
-        if update.effective_user.id not in ADMIN_IDS:
+        if update.effective_user.id not in ADMIN_ID:
             return await q.answer("❌ admin only")
 
         users = len(r.keys("quota:*")) if r else 0
@@ -585,16 +588,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 🏷 Tag processing
         tags_raw_counter = extract_tags(data)
-        def tag_score(item):
-            text, count = item
-
-            score = count
-
-           # 🔥 boost kalau nama manusia
-            if is_human_name(text):
-                score += 20
-
-            return -score, text
 
         tags = sorted(tags_raw_counter, key=lambda x: (-x[1], x[0]))
         groups = []
@@ -683,7 +676,7 @@ async def render_page(update, context, msg_obj):
     for t, c in tags:
         name = format_display(t)
 
-        if t.lower() == dominant_name:
+        if normalize_tag(t.lower()) == normalize_tag(dominant_name):
             line = f"⭐ <b>{html.escape(name)}</b> <code>({c})</code>"
         else:
             line = f"• {html.escape(name)} <code>({c})</code>"
@@ -749,12 +742,6 @@ async def shutdown(app):
     if session:
         await session.close()
 
-# ================= BUTTON =================
-async def button_handler(update, context):
-
-    q = update.callback_query
-    await q.answer()
-
 # ================= MAIN =================
 def main():
     app = (
@@ -777,7 +764,6 @@ def main():
 
     # ================= MESSAGE =================
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(CallbackQueryHandler(button_handler))
 
     print("🚀 BOT FINAL SUPER PERFECT")
     app.run_polling()
