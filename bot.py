@@ -779,7 +779,7 @@ async def render_page(update, context, msg_obj):
     MAX_LINES = 85
     chunks = [lines[i:i + MAX_LINES] for i in range(0, len(lines), MAX_LINES)]
 
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks):
 
         # 📌 hanya chat pertama
         if i == 0:
