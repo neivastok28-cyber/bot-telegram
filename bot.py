@@ -115,6 +115,46 @@ def format_number(text):
         return number
     return None
 
+def generate_number_formats(number):
+
+    number = re.sub(r"\D", "", number)
+
+    formats = []
+
+    # format 08xxxx
+    if number.startswith("08"):
+
+        formats.append(number)
+
+        formats.append("62" + number[1:])
+
+        formats.append("+62" + number[1:])
+
+    # format 62xxxx
+    elif number.startswith("62"):
+
+        formats.append(number)
+
+        formats.append("0" + number[2:])
+
+        formats.append("+62" + number[2:])
+
+    # format +62xxxx
+    elif number.startswith("+62"):
+
+        clean = number[1:]
+
+        formats.append(number)
+
+        formats.append(clean)
+
+        formats.append("0" + clean[2:])
+
+    else:
+        formats.append(number)
+
+    # hapus duplicate
+    return list(dict.fromkeys(formats))
 
 # ================= QUOTA =================
 def get_quota(user_id):
@@ -177,20 +217,26 @@ def get_next_token():
 
 
 async def get_gcontact(number):
+    number_formats = generate_number_formats(number)
+
+    print("FORMATS:", number_formats)
+
     for _ in range(len(GC_TOKENS)):  # coba semua token
         token = get_next_token()
 
         if not token:
             return {}
-
-        url = f"https://gcontact.id/api?token={token}&nomor={number}"
+            
+        for num in number_formats:
+        
+            url = f"https://gcontact.id/api?token={token}&nomor={num}"
 
         try:
             async with session.get(url, timeout=10) as res:
                 data = await res.json()
                 print("====== DEBUG API ======")
                 print("TOKEN:", token)
-                print("NUMBER:", number)
+                print("TRY NUMBER:", num)
                 print("RESPONSE:", data)
 
                 # 🔥 kalau sukses
