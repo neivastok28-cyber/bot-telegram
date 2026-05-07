@@ -780,7 +780,14 @@ async def render_page(update, context, msg_obj):
     chunks = [lines[i:i + MAX_LINES] for i in range(0, len(lines), MAX_LINES)]
 
     for chunk in chunks:
-        text = "📌 <b>Tag List</b>\n\n" + "\n".join(chunk)
+
+        # 📌 hanya chat pertama
+        if i == 0:
+            text = "📌 <b>Tag List</b>\n\n"
+        else:
+            text = ""
+            
+        text += "\n".join(chunk)
 
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
