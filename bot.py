@@ -718,7 +718,7 @@ async def render_page(update, context, msg_obj):
             rows.append(f"• OVO: <b>{ovo}</b>")
 
         if dana and dana != "UNREGISTERED":
-            rows.append(f"• Dana: <b>{dana}</b>").
+            rows.append(f"• Dana: <b>{dana}</b>")
 
         if linkaja and linkaja != "UNREGISTERED":
             rows.append(f"• LinkAja: <b>{linkaja}</b>")
