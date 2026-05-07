@@ -501,7 +501,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 🔁 Cache / API
         cached = get_cache(number)
         data = cached if cached else await get_gcontact(number)
-        quota = data.get("info_account", {}).get("remaining_quota", 0)
+        user_quota = get_quota(user_id)
         gc_picture = data.get("data", {}).get("getcontact", {}).get("picture", None)
         wa_picture = data.get("data", {}).get("whatsapp", {}).get("picture", None)
         primary_name = data.get("data", {}).get("getcontact", {}).get("primary", None)
@@ -551,7 +551,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["raw"] = raw_list
         context.user_data["number"] = number
         context.user_data["primary_name"] = primary_name
-        context.user_data["quota"] = quota
+        context.user_data["quota"] = user_quota
         context.user_data["gc_picture"] = gc_picture
         context.user_data["wa_picture"] = wa_picture
 
