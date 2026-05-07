@@ -117,43 +117,29 @@ def format_number(text):
 
 def generate_number_formats(number):
 
-    number = re.sub(r"\D", "", number)
+    raw = number.strip()
+
+    clean = re.sub(r"\D", "", raw)
 
     formats = []
 
-    # format 08xxxx
-    if number.startswith("08"):
-
-        formats.append(number)
-
-        formats.append("62" + number[1:])
-
-        formats.append("+62" + number[1:])
-
-    # format 62xxxx
-    elif number.startswith("62"):
-
-        formats.append(number)
-
-        formats.append("0" + number[2:])
-
-        formats.append("+62" + number[2:])
-
-    # format +62xxxx
-    elif number.startswith("+62"):
-
-        clean = number[1:]
-
-        formats.append(number)
+    # 08xxxx
+    if clean.startswith("08"):
 
         formats.append(clean)
+        formats.append("62" + clean[1:])
+        formats.append("+62" + clean[1:])
 
+    # 62xxxx
+    elif clean.startswith("62"):
+
+        formats.append(clean)
         formats.append("0" + clean[2:])
+        formats.append("+62" + clean[2:])
 
     else:
-        formats.append(number)
+        formats.append(clean)
 
-    # hapus duplicate
     return list(dict.fromkeys(formats))
 
 # ================= QUOTA =================
@@ -215,59 +201,45 @@ def get_next_token():
 
     return token
 
-
 async def get_gcontact(number):
+
     number_formats = generate_number_formats(number)
 
     print("FORMATS:", number_formats)
 
-    for _ in range(len(GC_TOKENS)):  # coba semua token
+    # coba semua token
+    for _ in range(len(GC_TOKENS)):
+
         token = get_next_token()
 
         if not token:
             return {}
 
         quota_habis = False
-            
+
+        # coba semua format nomor
         for num in number_formats:
-        
+
             url = f"https://gcontact.id/api?token={token}&nomor={num}"
 
             try:
+
                 async with session.get(url, timeout=10) as res:
                     data = await res.json()
+
                 print("====== DEBUG API ======")
                 print("TOKEN:", token)
                 print("TRY NUMBER:", num)
                 print("RESPONSE:", data)
 
-                # 🔥 kalau sukses
+                # sukses
                 if data.get("success") and data.get("data"):
-                    return data
-
-                message = data.get("message", "")
-
-                if "quota" in message.lower():
-
-                    print("TOKEN QUOTA HABIS:", token)
-
-                    quota_habis = True
-
-                    break
-
-            except Exception as e:
-                print("ERROR:", e)
-
-            await asyncio.sleep(1)
-
-            if quota_habis:
-                continue
 
                     print(
                         "TAGS RAW:",
                         data.get("data", {})
-                        .get("getcontact", {})
-                        .get("tags")
+                            .get("getcontact", {})
+                            .get("tags")
                     )
 
                     print(
@@ -279,22 +251,30 @@ async def get_gcontact(number):
 
                     return data
 
-                # 🔥 kalau quota habis → lanjut token berikutnya
+                # quota habis → token berikutnya
                 message = data.get("message", "")
 
                 if "quota" in message.lower():
+
                     print("TOKEN QUOTA HABIS:", token)
-                    
+
                     quota_habis = True
 
                     break
 
-        except Exception as e:
-            print("ERROR:", e)
+                print("FORMAT GAGAL:", num)
 
-        await asyncio.sleep(1)
+            except Exception as e:
+                print("ERROR:", e)
+
+            await asyncio.sleep(1)
+
+        # lanjut token berikutnya
+        if quota_habis:
+            continue
 
     print("SEMUA TOKEN GAGAL")
+
     return {}
 
 # ================= TAG =================
@@ -679,7 +659,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not use_quota(user_id):
             return await loading.edit_text("❌ quota habis")
 
-        if not cached:
+        if data and not cached:
             set_cache(number, data)
 
         add_usage(user_id)
@@ -823,7 +803,7 @@ async def render_page(update, context, msg_obj):
 
     ━━━━━━━━━━━━━━
 
-    {wa_block}.
+    {wa_block}
     {ewallet_text}
     {search_text}
     """,
