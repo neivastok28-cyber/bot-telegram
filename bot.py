@@ -356,6 +356,12 @@ def analyze_tags(tags):
 
     return f"{format_display(dominant)} ({dominant_count})", "-", "-"
 
+# ================= BACK BUTTON =================
+def back_button():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Back", callback_data="back")]
+    ])
+
 # ================= MENU =================
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -371,10 +377,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         usage = 0
 
     if q.data == "back":
-        return await q.edit_message_text(
-            f"🤖 MENU UTAMA\n\n🎟 Quota: {quota}\n📊 Usage: {usage}",
-            reply_markup=main_menu(user_id)
-        )
+        return await menu(update, context)
 
     if q.data == "check":
         return await q.edit_message_text("📱 Kirim nomor")
@@ -396,29 +399,95 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data == "dashboard":
         total_users = len(r.keys("quota:*")) if r else 0
+        total_usage = sum(
+            int(r.get(k) or 0)
+            for k in r.keys("usage:*")
+        ) if r else 0
         return await q.edit_message_text(
-            f"📊 DASHBOARD\nUsers: {total_users}",
+            f"""📊 DASHBOARD
+
+            👥 Users: {total_users}
+            📈 Total Usage: {total_usage}
+            """
             reply_markup=back_button()
         )
 
     if q.data == "history":
-        raw = r.lrange(f"history:{user_id}", 0, 10) if r else []
-        text = "\n".join([json.loads(x)["number"] for x in raw]) or "-"
-        return await q.edit_message_text(text, reply_markup=back_button())
+        
+        user_id = update.effective_user.id
 
+        data = r.lrange(f"history:{user_id}", 0, 20)
+
+        if not data:
+        return await q.edit_message_text(
+            "🪵 History kosong",
+            reply_markup=back_button()
+        )
+
+        text = "🪵 HISTORY\n\n".
+
+        for item in data:
+            d = json.loads(item)
+
+            text += f"• {d['number']} - {d['name']}\n"
+
+        return await q.edit_message_text(
+            text,
+            reply_markup=back_button()
+        )
     if q.data == "export":
-        return await export_history(update, context)
+
+        user_id = update.effective_user.id
+
+        data = r.lrange(f"history:{user_id}", 0, 100)
+
+        if not data:
+            return await q.answer("History kosong")
+
+        text = ""
+
+        for item in data:
+           d = json.loads(item)
+
+           text += f"{d['number']} - {d['name']}\n"
+
+        with open("history.txt", "w", encoding="utf-8") as f:
+            f.write(text)
+
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=open("history.txt", "rb")
+        )
 
     if q.data == "clear":
+    
+        user_id = update.effective_user.id
+
         if r:
             r.delete(f"history:{user_id}")
-        return await q.edit_message_text("🗑 History dihapus", reply_markup=back_button())
+
+        return await q.edit_message_text(
+            "✅ History dihapus",
+            reply_markup=back_button()
+        )
 
     if q.data == "admin":
+    
+        if update.effective_user.id not in ADMIN_IDS:
+            return await q.answer("❌ admin only")
+
+        users = len(r.keys("quota:*")) if r else 0
+
         return await q.edit_message_text(
-            "⚙️ ADMIN PANEL\n"
-            "/addquota <id> <jumlah>\n"
-            "/setquota <id> <jumlah>",
+            f"""⚙️ ADMIN PANEL
+
+    👥 Users: {users}
+
+    COMMAND:
+
+    /addquota id jumlah
+    /setquota id jumlah
+    """,
             reply_markup=back_button()
         )
 
@@ -665,6 +734,8 @@ async def render_page(update, context, msg_obj):
         
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_quota(update.effective_user.id) == 0:
+        set_quota(update.effective_user.id, 10)
     await update.message.reply_text("🤖 MENU UTAMA", reply_markup=main_menu(update.effective_user.id))
 
 
@@ -678,6 +749,11 @@ async def shutdown(app):
     if session:
         await session.close()
 
+# ================= BUTTON =================
+async def button_handler(update, context):
+
+    q = update.callback_query
+    await q.answer()
 
 # ================= MAIN =================
 def main():
@@ -701,6 +777,7 @@ def main():
 
     # ================= MESSAGE =================
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(button_handler))
 
     print("🚀 BOT FINAL SUPER PERFECT")
     app.run_polling()
