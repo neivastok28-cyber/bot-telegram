@@ -226,14 +226,16 @@ async def get_gcontact(number):
 
         if not token:
             return {}
+
+        quota_habis = False
             
         for num in number_formats:
         
             url = f"https://gcontact.id/api?token={token}&nomor={num}"
 
-        try:
-            async with session.get(url, timeout=10) as res:
-                data = await res.json()
+            try:
+                async with session.get(url, timeout=10) as res:
+                    data = await res.json()
                 print("====== DEBUG API ======")
                 print("TOKEN:", token)
                 print("TRY NUMBER:", num)
@@ -241,6 +243,23 @@ async def get_gcontact(number):
 
                 # 🔥 kalau sukses
                 if data.get("success") and data.get("data"):
+                    return data
+
+                message = data.get("message", "")
+
+                if "quota" in message.lower():
+
+                    print("TOKEN QUOTA HABIS:", token)
+
+                    quota_habis = True
+
+                    break
+
+                except Exception as e:
+                    print("ERROR:", e)
+
+            if quota_habis:
+                continue
 
                     print(
                         "TAGS RAW:",
@@ -263,9 +282,10 @@ async def get_gcontact(number):
 
                 if "quota" in message.lower():
                     print("TOKEN QUOTA HABIS:", token)
-                    continue
+                    
+                    quota_habis = True
 
-                print("TOKEN GAGAL:", token)
+                    break
 
         except Exception as e:
             print("ERROR:", e)
