@@ -379,19 +379,19 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "back":
         return await q.edit_message_text(
             "🤖 MENU UTAMA",
-            reply_markup=main_menu(update.effective_user.id)
+            reply_markup=main_menu(user_id)
         )
         
-    if q.data == "check":
+    elif q.data == "check":
         return await q.edit_message_text("📱 Kirim nomor")
 
-    if q.data == "quota":
+    elif q.data == "quota":
         return await q.edit_message_text(
             f"🎟 Sisa Quota: {quota}",
             reply_markup=back_button()
         )
 
-    if q.data == "profile":
+    elif q.data == "profile":
         return await q.edit_message_text(
             f"👤 PROFILE\n\n"
             f"ID: {user_id}\n"
@@ -400,22 +400,25 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_button()
         )
 
-    if q.data == "dashboard":
+    elif q.data == "dashboard":
+        
         total_users = len(r.keys("quota:*")) if r else 0
+        
         total_usage = sum(
             int(r.get(k) or 0)
             for k in r.keys("usage:*")
         ) if r else 0
+        
         return await q.edit_message_text(
             f"""📊 DASHBOARD
 
-            👥 Users: {total_users}
-            📈 Total Usage: {total_usage}
-            """,
+    👥 Users: {total_users}
+    📈 Total Usage: {total_usage}
+    """,
             reply_markup=back_button()
         )
 
-    if q.data == "history":
+    elif q.data == "history":
         
         user_id = update.effective_user.id
 
@@ -423,9 +426,9 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not data:
             return await q.edit_message_text(
-            "🪵 History kosong",
-            reply_markup=back_button()
-        )
+                "🪵 History kosong",
+                reply_markup=back_button()
+            )
 
         text = "🪵 HISTORY\n\n"
 
@@ -438,7 +441,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text,
             reply_markup=back_button()
         )
-    if q.data == "export":
+    elif q.data == "export":
 
         user_id = update.effective_user.id
 
@@ -459,10 +462,11 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await context.bot.send_document(
             chat_id=update.effective_chat.id,
-            document=open("history.txt", "rb")
+            document=open("history.txt", "rb"),
+            filename="history.txt"
         )
 
-    if q.data == "clear":
+    elif q.data == "clear":
     
         user_id = update.effective_user.id
 
@@ -474,23 +478,25 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_button()
         )
 
-    if q.data == "admin":
+    elif q.data == "admin":
     
-        if update.effective_user.id not in ADMIN_ID:
+        if update.effective_user.id != ADMIN_ID:
             return await q.answer("❌ admin only")
 
         users = len(r.keys("quota:*")) if r else 0
 
-        return await q.edit_message_text(
-            f"""⚙️ ADMIN PANEL
+        text = f"""⚙️ ADMIN PANEL
 
-    👥 Users: {users}
+    👥 Total Users: {users}
 
-    COMMAND:
+    🛠 COMMAND:
 
     /addquota id jumlah
     /setquota id jumlah
-    """,
+    """
+
+        return await q.edit_message_text(
+            text,
             reply_markup=back_button()
         )
 
