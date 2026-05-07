@@ -404,7 +404,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for k in r.keys("usage:*")
         ) if r else 0
         return await q.edit_message_text(
-            f"""📊 DASHBOARD
+            f"""📊 DASHBOARD,
 
             👥 Users: {total_users}
             📈 Total Usage: {total_usage}
