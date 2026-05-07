@@ -255,8 +255,10 @@ async def get_gcontact(number):
 
                     break
 
-                except Exception as e:
-                    print("ERROR:", e)
+            except Exception as e:
+                print("ERROR:", e)
+
+            await asyncio.sleep(1)
 
             if quota_habis:
                 continue
