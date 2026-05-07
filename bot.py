@@ -380,7 +380,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await q.edit_message_text(
             "🤖 MENU UTAMA",
             reply_markup=main_menu(update.effective_user.id)
-        ).
+        )
         
     if q.data == "check":
         return await q.edit_message_text("📱 Kirim nomor")
