@@ -192,11 +192,34 @@ async def get_gcontact(number):
                 print("TOKEN:", token)
                 print("NUMBER:", number)
                 print("RESPONSE:", data)
-                print("TAGS RAW:", data.get("data", {}).get("getcontact", {}).get("tags"))
-                print("PICTURE:", data.get("data", {}).get("getcontact", {}).get("picture"))
 
+                # 🔥 kalau sukses
                 if data.get("success") and data.get("data"):
+
+                    print(
+                        "TAGS RAW:",
+                        data.get("data", {})
+                        .get("getcontact", {})
+                        .get("tags")
+                    )
+
+                    print(
+                        "PICTURE:",
+                        data.get("data", {})
+                            .get("getcontact", {})
+                            .get("picture")
+                    )
+
                     return data
+
+                # 🔥 kalau quota habis → lanjut token berikutnya
+                message = data.get("message", "")
+
+                if "quota" in message.lower():
+                    print("TOKEN QUOTA HABIS:", token)
+                    continue
+
+                print("TOKEN GAGAL:", token)
 
         except Exception as e:
             print("ERROR:", e)
@@ -465,6 +488,8 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             document=open("history.txt", "rb"),
             filename="history.txt"
         )
+        
+        return
 
     elif q.data == "clear":
     
@@ -555,10 +580,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_rate_limited(user_id):
         return await update.message.reply_text("⚠️ Terlalu cepat")
 
-    # 🎟 Cek quota
-    if not use_quota(user_id):
-        return await update.message.reply_text("❌ quota habis")
-
     # 📱 Format nomor
     number = format_number(update.message.text)
     if not number:
@@ -586,6 +607,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not data:
             return await loading.edit_text("⚠️ API error")
+
+        if not use_quota(user_id):
+            return await loading.edit_text("❌ quota habis")
 
         if not cached:
             set_cache(number, data)
@@ -618,6 +642,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["groups"] = []
         context.user_data["raw"] = raw_list
         context.user_data["number"] = number
+        # 💳 Ewallet
+        context.user_data["ewallet"] = (
+            data.get("data", {})
+                .get("ewallet", {})
+        )
+
+        # 🌐 Search Engine
+        context.user_data["search_engine"] = (
+             data.get("data", {})
+                .get("search_engine")
+        )
+
         context.user_data["primary_name"] = primary_name
         context.user_data["quota"] = user_quota
         context.user_data["gc_picture"] = gc_picture
@@ -638,6 +674,8 @@ async def render_page(update, context, msg_obj):
     wa_picture = context.user_data.get("wa_picture", None)
     tags = context.user_data["tags"]
     number = context.user_data["number"]
+    ewallet = context.user_data.get("ewallet", {})
+    search_engine = context.user_data.get("search_engine")
     
     # ambil dominant dari tag
     dominant, alias, lokasi = analyze_tags(tags)
@@ -657,9 +695,56 @@ async def render_page(update, context, msg_obj):
     
     # WA BLOCK (TANPA INDENT)
     wa_block = f"""📱 <b>Whatsapp</b> 〞
-
 🟢 <b>Terdaftar</b>
 <a href="https://wa.me/{number}">{number}</a>"""
+    
+    ewallet_text = ""
+
+    if ewallet:
+
+        gopay = ewallet.get("gopay_user")
+        ovo = ewallet.get("ovo")
+        dana = ewallet.get("dana")
+        linkaja = ewallet.get("linkaja")
+        shopeepay = ewallet.get("shopeepay")
+        isaku = ewallet.get("isaku")
+
+        rows = []
+
+        if gopay and gopay != "UNREGISTERED":
+            rows.append(f"• Gopay: <b>{gopay}</b>")
+
+        if ovo and ovo != "UNREGISTERED":
+            rows.append(f"• OVO: <b>{ovo}</b>")
+
+        if dana and dana != "UNREGISTERED":
+            rows.append(f"• Dana: <b>{dana}</b>").
+
+        if linkaja and linkaja != "UNREGISTERED":
+            rows.append(f"• LinkAja: <b>{linkaja}</b>")
+
+        if shopeepay and shopeepay != "UNREGISTERED":
+            rows.append(f"• ShopeePay: <b>{shopeepay}</b>")
+
+        if isaku and isaku != "UNREGISTERED":
+            rows.append(f"• iSaku: <b>{isaku}</b>")
+
+        if rows:
+            ewallet_text = (
+                "\n\n💳 <b>E-Wallet</b>\n\n"
+                + "\n".join(rows)
+            )
+
+    search_text = ""
+
+    if search_engine:
+
+        search_text = f"""
+
+    🌐 <b>Search Engine</b>
+
+    {html.escape(str(search_engine))}
+    """
 
     # HEADER (TANPA INDENT)
     await msg_obj.edit_text(
@@ -670,7 +755,9 @@ async def render_page(update, context, msg_obj):
 
     ━━━━━━━━━━━━━━
 
-    {wa_block}
+    {wa_block}.
+    {ewallet_text}
+    {search_text}
     """,
         parse_mode="HTML",
         disable_web_page_preview=True
