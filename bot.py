@@ -24,7 +24,11 @@ from telegram.ext import (
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
-GC_TOKENS = os.getenv("API_TOKENS", "").split(",")
+GC_TOKENS = [
+    t.strip()
+    for t in os.getenv("API_TOKENS", "").split(",")
+    if t.strip()
+]
 REDIS_URL = os.getenv("REDIS_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
@@ -205,72 +209,129 @@ async def get_gcontact(number):
 
     number_formats = generate_number_formats(number)
 
+    # tambahan format paksa
+    clean = re.sub(r"\D", "", number)
+
+    extra_formats = [
+        clean,
+        f"0{clean[2:]}" if clean.startswith("62") else clean,
+        f"+{clean}" if not clean.startswith("+") else clean,
+    ]
+
+    number_formats.extend(extra_formats)
+
+    # hapus duplicate
+    number_formats = list(dict.fromkeys(number_formats))
+
     print("FORMATS:", number_formats)
 
-    # coba semua token
+    token_errors = []
+
+    # loop token
     for _ in range(len(GC_TOKENS)):
 
         token = get_next_token()
 
         if not token:
-            return {}
+            continue
 
-        quota_habis = False
+        print(f"\n===== TRY TOKEN {token} =====")
 
-        # coba semua format nomor
+        token_quota_habis = False
+
+        # loop format nomor
         for num in number_formats:
 
             url = f"https://gcontact.id/api?token={token}&nomor={num}"
 
             try:
 
-                async with session.get(url, timeout=10) as res:
-                    data = await res.json()
+                async with session.get(url, timeout=15) as res:
+
+                    # response bukan json
+                    if res.status != 200:
+                        print("HTTP ERROR:", res.status)
+                        continue
+
+                    try:
+                        data = await res.json()
+                    except Exception:
+                        text = await res.text()
+                        print("INVALID JSON:", text)
+                        continue
 
                 print("====== DEBUG API ======")
                 print("TOKEN:", token)
                 print("TRY NUMBER:", num)
                 print("RESPONSE:", data)
 
-                # sukses
-                if data.get("success") and data.get("data"):
+                message = str(data.get("message", "")).lower()
 
-                    print(
-                        "TAGS RAW:",
-                        data.get("data", {})
-                            .get("getcontact", {})
-                            .get("tags")
-                    )
-
-                    print(
-                        "PICTURE:",
-                        data.get("data", {})
-                            .get("getcontact", {})
-                            .get("picture")
-                    )
-
-                    return data
-
-                # quota habis → token berikutnya
-                message = data.get("message", "")
-
-                if "quota" in message.lower():
+                # quota habis
+                if "quota" in message or "empty quota" in message:
 
                     print("TOKEN QUOTA HABIS:", token)
 
-                    quota_habis = True
-
+                    token_quota_habis = True
                     break
 
-                print("FORMAT GAGAL:", num)
+                # response success
+                if data.get("success"):
+
+                    result_data = data.get("data", {})
+
+                    getcontact = result_data.get("getcontact", {})
+                    whatsapp = result_data.get("whatsapp", {})
+                    ewallet = result_data.get("ewallet", [])
+                    search_engine = result_data.get("search_engine")
+
+                    # ada data getcontact
+                    if (
+                        getcontact.get("tags")
+                        or getcontact.get("primary")
+                        or getcontact.get("picture")
+                    ):
+
+                        print("SUCCESS GETCONTACT")
+                        return data
+
+                    # whatsapp valid
+                    if whatsapp.get("exist") is True:
+
+                        print("SUCCESS WHATSAPP")
+                        return data
+
+                    # ada ewallet
+                    if ewallet:
+
+                        print("SUCCESS EWALLET")
+                        return data
+
+                    # ada search engine
+                    if search_engine:
+
+                        print("SUCCESS SEARCH")
+                        return data
+
+                    print("DATA KOSONG")
+
+                else:
+
+                    print("API FAILED:", message)
+
+            except asyncio.TimeoutError:
+
+                print("TIMEOUT:", num)
 
             except Exception as e:
-                print("ERROR:", e)
+
+                print("ERROR:", str(e))
+                token_errors.append(str(e))
 
             await asyncio.sleep(1)
 
-        # lanjut token berikutnya
-        if quota_habis:
+        # token habis → lanjut token lain
+        if token_quota_habis:
             continue
 
     print("SEMUA TOKEN GAGAL")
@@ -654,7 +715,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         primary_name = data.get("data", {}).get("getcontact", {}).get("primary", None)
 
         if not data:
-            return await loading.edit_text("⚠️ API error")
+            return await loading.edit_text("⚠️ Data tidak ditemukan / API sedang bermasalah")
 
         if not use_quota(user_id):
             return await loading.edit_text("❌ quota habis")
