@@ -209,7 +209,6 @@ async def get_gcontact(number):
 
     number_formats = generate_number_formats(number)
 
-    # tambahan format paksa
     clean = re.sub(r"\D", "", number)
 
     extra_formats = [
@@ -225,9 +224,11 @@ async def get_gcontact(number):
 
     print("FORMATS:", number_formats)
 
-    token_errors = []
+    if not GC_TOKENS:
+        print("TOKEN KOSONG")
+        return {}
 
-    # loop token
+    # ================= LOOP TOKEN =================
     for _ in range(len(GC_TOKENS)):
 
         token = get_next_token()
@@ -237,27 +238,28 @@ async def get_gcontact(number):
 
         print(f"\n===== TRY TOKEN {token} =====")
 
-        token_quota_habis = False
+        token_dead = False
 
-        # loop format nomor
+        # ================= LOOP NOMOR =================
         for num in number_formats:
 
             url = f"https://gcontact.id/api?token={token}&nomor={num}"
 
             try:
 
-                async with session.get(url, timeout=15) as res:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as res:
 
-                    # response bukan json
+                    # HTTP error
                     if res.status != 200:
-                        print("HTTP ERROR:", res.status)
+                        print(f"HTTP ERROR {res.status} | {num}")
                         continue
 
+                    # parse json
                     try:
                         data = await res.json()
                     except Exception:
                         text = await res.text()
-                        print("INVALID JSON:", text)
+                        print("INVALID JSON:", text[:300])
                         continue
 
                 print("====== DEBUG API ======")
@@ -265,73 +267,85 @@ async def get_gcontact(number):
                 print("TRY NUMBER:", num)
                 print("RESPONSE:", data)
 
+                success = data.get("success", False)
                 message = str(data.get("message", "")).lower()
 
-                # quota habis
-                if "quota" in message or "empty quota" in message:
+                # ================= TOKEN HABIS =================
+                if (
+                    "empty quota" in message
+                    or "quota" in message
+                    or data.get("info_account", {}).get("remaining_quota") == 0
+                ):
 
-                    print("TOKEN QUOTA HABIS:", token)
+                    print(f"TOKEN QUOTA HABIS: {token}")
 
-                    token_quota_habis = True
+                    token_dead = True
                     break
 
-                # response success
-                if data.get("success"):
+                # ================= TOKEN INVALID =================
+                if "invalid token" in message:
+
+                    print(f"TOKEN INVALID: {token}")
+
+                    token_dead = True
+                    break
+
+                # ================= SUCCESS =================
+                if success:
 
                     result_data = data.get("data", {})
 
                     getcontact = result_data.get("getcontact", {})
                     whatsapp = result_data.get("whatsapp", {})
-                    ewallet = result_data.get("ewallet", [])
+                    ewallet = result_data.get("ewallet", {})
                     search_engine = result_data.get("search_engine")
 
-                    # ada data getcontact
+                    # ada tag / nama / foto
                     if (
                         getcontact.get("tags")
                         or getcontact.get("primary")
                         or getcontact.get("picture")
                     ):
-
                         print("SUCCESS GETCONTACT")
                         return data
 
                     # whatsapp valid
                     if whatsapp.get("exist") is True:
-
                         print("SUCCESS WHATSAPP")
                         return data
 
                     # ada ewallet
                     if ewallet:
-
                         print("SUCCESS EWALLET")
                         return data
 
                     # ada search engine
                     if search_engine:
-
-                        print("SUCCESS SEARCH")
+                        print("SUCCESS SEARCH ENGINE")
                         return data
 
-                    print("DATA KOSONG")
+                    print("SUCCESS TAPI DATA KOSONG")
 
                 else:
 
-                    print("API FAILED:", message)
+                    print(f"API FAILED: {message}")
 
             except asyncio.TimeoutError:
 
-                print("TIMEOUT:", num)
+                print(f"REQUEST TIMEOUT: {num}")
+
+            except aiohttp.ClientError as e:
+
+                print(f"AIOHTTP ERROR: {str(e)}")
 
             except Exception as e:
 
-                print("ERROR:", str(e))
-                token_errors.append(str(e))
+                print(f"UNKNOWN ERROR: {str(e)}")
 
             await asyncio.sleep(1)
 
-        # token habis → lanjut token lain
-        if token_quota_habis:
+        # ================= PINDAH TOKEN =================
+        if token_dead:
             continue
 
     print("SEMUA TOKEN GAGAL")
