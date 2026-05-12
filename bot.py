@@ -694,25 +694,156 @@ async def export_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_document(chat_id=user_id, document=bio, filename="history.xlsx")
 
+# ================= BULK SEARCH =================
+async def handle_bulk_numbers(update, context, numbers):
 
-# ================= HANDLE =================
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # 🔒 Anti spam
+    # max 50 nomor
+    if len(numbers) > 50:
+        return await update.message.reply_text(
+            "❌ Maksimal 50 nomor sekali kirim"
+        )
+
+    # validasi quota
+    quota = get_quota(user_id)
+
+    if quota < len(numbers):
+        return await update.message.reply_text(
+            f"❌ Quota tidak cukup\n\n"
+            f"Quota: {quota}\n"
+            f"Butuh: {len(numbers)}"
+        )
+
+    loading = await update.message.reply_text(
+        f"🔎 Memproses {len(numbers)} nomor..."
+    )
+
+    results = []
+
+    # semaphore anti overload
+    semaphore = asyncio.Semaphore(5)
+
+    async def process_number(number):
+
+        async with semaphore:
+
+            try:
+
+                number = format_number(number)
+
+                if not number:
+                    return f"❌ {number} | INVALID"
+
+                cached = get_cache(number)
+
+                data = cached if cached else await get_gcontact(number)
+
+                if not data:
+                    return f"❌ {number} | DATA TIDAK ADA"
+
+                if not cached:
+                    set_cache(number, data)
+
+                use_quota(user_id)
+                add_usage(user_id)
+
+                primary = (
+                    data.get("data", {})
+                    .get("getcontact", {})
+                    .get("primary")
+                )
+
+                tags = extract_tags(data)
+
+                dominant, _, _ = analyze_tags(tags)
+
+                if primary:
+                    name = primary
+                else:
+                    name = dominant.split("(")[0].strip()
+
+                return f"✅ {number} | {name}"
+
+            except Exception as e:
+
+                return f"❌ {number} | ERROR"
+
+    tasks = [process_number(n) for n in numbers]
+
+    results = await asyncio.gather(*tasks)
+
+    # save txt
+    filename = f"bulk_{user_id}.txt"
+
+    with open(filename, "w", encoding="utf-8") as f:
+
+        f.write("\n".join(results))
+
+    await loading.delete()
+
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=open(filename, "rb"),
+        filename="result.txt",
+        caption=f"✅ Selesai scan {len(numbers)} nomor"
+    )
+    
+# ================= HANDLE =================
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user_id = update.effective_user.id
+
+    # anti spam
     if is_rate_limited(user_id):
-        return await update.message.reply_text("⚠️ Terlalu cepat")
+        return await update.message.reply_text(
+            "⚠️ Terlalu cepat"
+        )
 
-    # 📱 Format nomor
-    number = format_number(update.message.text)
+    text = update.message.text.strip()
+
+    # ================= BULK MODE =================
+    lines = text.splitlines()
+
+    if len(lines) > 1:
+
+        numbers = []
+
+        for line in lines:
+
+            num = format_number(line)
+
+            if num:
+                numbers.append(num)
+
+        # hapus duplicate
+        numbers = list(dict.fromkeys(numbers))
+
+        if not numbers:
+            return await update.message.reply_text(
+                "❌ Tidak ada nomor valid"
+            )
+
+        return await handle_bulk_numbers(
+            update,
+            context,
+            numbers
+        )
+
+    # ================= SINGLE MODE =================
+    number = format_number(text)
+
     if not number:
-        return await update.message.reply_text("❌ nomor tidak valid")
+        return await update.message.reply_text(
+            "❌ nomor tidak valid"
+        )
 
-    # 🔐 Lock biar tidak double request
+    # lock
     if not acquire_lock(number):
-        return await update.message.reply_text("⏳ Nomor sedang diproses...")
+        return await update.message.reply_text(
+            "⏳ Nomor sedang diproses..."
+        )
 
-    # 🔎 Loading
     loading = await update.message.reply_text(
         f"🔎 Mencari:\n<code>{number}</code>",
         parse_mode="HTML",
@@ -720,61 +851,87 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        # 🔁 Cache / API
+
         cached = get_cache(number)
+
         data = cached if cached else await get_gcontact(number)
+
         user_quota = get_quota(user_id)
-        gc_picture = data.get("data", {}).get("getcontact", {}).get("picture", None)
-        wa_picture = data.get("data", {}).get("whatsapp", {}).get("picture", None)
-        primary_name = data.get("data", {}).get("getcontact", {}).get("primary", None)
+
+        gc_picture = (
+            data.get("data", {})
+            .get("getcontact", {})
+            .get("picture")
+        )
+
+        wa_picture = (
+            data.get("data", {})
+            .get("whatsapp", {})
+            .get("picture")
+        )
+
+        primary_name = (
+            data.get("data", {})
+            .get("getcontact", {})
+            .get("primary")
+        )
 
         if not data:
-            return await loading.edit_text("⚠️ Data tidak ditemukan / API sedang bermasalah")
+            return await loading.edit_text(
+                "⚠️ Data tidak ditemukan / API bermasalah"
+            )
 
         if not use_quota(user_id):
-            return await loading.edit_text("❌ quota habis")
+            return await loading.edit_text(
+                "❌ quota habis"
+            )
 
         if data and not cached:
             set_cache(number, data)
 
         add_usage(user_id)
 
-        # 🏷 Tag processing
         tags_raw_counter = extract_tags(data)
 
-        tags = sorted(tags_raw_counter, key=lambda x: (-x[1], x[0]))
-        groups = []
+        tags = sorted(
+            tags_raw_counter,
+            key=lambda x: (-x[1], x[0])
+        )
 
         raw_list = []
+
         for t, c in tags_raw_counter:
             raw_list.extend([t] * c)
 
         dominant, alias, lokasi = analyze_tags(tags)
 
-        # 📜 History
+        # history
         if r:
-            r.lpush(f"history:{user_id}", json.dumps({
-                "number": number,
-                "name": dominant,
-                "tags": tags
-            }))
+            r.lpush(
+                f"history:{user_id}",
+                json.dumps({
+                    "number": number,
+                    "name": dominant,
+                    "tags": tags
+                })
+            )
+
             r.ltrim(f"history:{user_id}", 0, 50)
 
-        # 💾 Simpan ke session
+        # session
         context.user_data["tags"] = tags
         context.user_data["groups"] = []
         context.user_data["raw"] = raw_list
         context.user_data["number"] = number
-        # 💳 Ewallet
+
         context.user_data["ewallet"] = (
             data.get("data", {})
-                .get("ewallet", {})
+            .get("ewallet", {})
         )
 
-        # 🌐 Search Engine
         context.user_data["search_engine"] = (
-             data.get("data", {})
-                .get("search_engine")
+            data.get("data", {})
+            .get("search_engine")
         )
 
         context.user_data["primary_name"] = primary_name
@@ -782,11 +939,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["gc_picture"] = gc_picture
         context.user_data["wa_picture"] = wa_picture
 
-        # 🖥 Render
         await render_page(update, context, loading)
 
     finally:
-        # 🔓 WAJIB → biar bot tidak freeze
+
         release_lock(number)
 
 # ================= RENDER =================
