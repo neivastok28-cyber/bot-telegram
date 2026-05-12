@@ -736,6 +736,10 @@ async def handle_bulk_numbers(update, context, numbers):
                     return f"❌ {number} | INVALID"
 
                 cached = get_cache(number)
+                if cached:
+                    print(f"CACHE HIT: {number}")
+                else:
+                    print(f"CACHE MISS: {number}")
 
                 data = cached if cached else await get_gcontact(number)
 
@@ -771,7 +775,10 @@ async def handle_bulk_numbers(update, context, numbers):
                 result_data = data.get("data", {})
 
                 whatsapp = result_data.get("whatsapp", {})
-                ewallet = result_data.get("ewallet", {})
+                ewallet = result_data.get("ewallet") or {}
+
+                if isinstance(ewallet, list):
+                    ewallet = {}
                 search_engine = result_data.get("search_engine")
 
                 # ================= TAG =================
@@ -927,7 +934,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
 
         cached = get_cache(number)
-
+        if cached:
+            print(f"CACHE HIT: {number}")
+        else:
+            print(f"CACHE MISS: {number}")
         data = cached if cached else await get_gcontact(number)
 
         user_quota = get_quota(user_id)
@@ -1030,7 +1040,10 @@ async def render_page(update, context, msg_obj):
     wa_picture = context.user_data.get("wa_picture", None)
     tags = context.user_data["tags"]
     number = context.user_data["number"]
-    ewallet = context.user_data.get("ewallet", {})
+    ewallet = context.user_data.get("ewallet") or {}
+
+    if isinstance(ewallet, list):
+        ewallet = {}
     search_engine = context.user_data.get("search_engine")
     
     # ambil dominant dari tag
