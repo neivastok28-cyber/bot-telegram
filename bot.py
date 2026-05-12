@@ -743,10 +743,8 @@ async def handle_bulk_numbers(update, context, numbers):
                     return f"❌ {number} | DATA TIDAK ADA"
 
                 if not cached:
-                    set_cache(number, data)
-
-                use_quota(user_id)
-                add_usage(user_id)
+                    use_quota(user_id)
+                    add_usage(user_id)
 
                 primary = (
                     data.get("data", {})
@@ -757,15 +755,91 @@ async def handle_bulk_numbers(update, context, numbers):
                 tags = extract_tags(data)
 
                 dominant, _, _ = analyze_tags(tags)
+                
+                tags = sorted(
+                    tags,
+                    key=lambda x: (-x[1], x[0])
+                )
 
+                # ================= NAMA =================
                 if primary:
                     name = primary
                 else:
                     name = dominant.split("(")[0].strip()
+                # ================= DATA =================
 
-                return f"✅ {number} | {name}"
+                result_data = data.get("data", {})
+
+                whatsapp = result_data.get("whatsapp", {})
+                ewallet = result_data.get("ewallet", {})
+                search_engine = result_data.get("search_engine")
+
+                # ================= TAG =================
+                tags_text = []
+
+                for t, c in tags[:20]:
+
+                    tag_name = format_display(t)
+
+                    tags_text.append(
+                        f"• {tag_name} ({c})"
+                    )
+
+                tag_result = "\n".join(tags_text)
+
+                # ================= WHATSAPP =================
+                wa_status = (
+                    "Terdaftar"
+                    if whatsapp.get("exist")
+                    else "Tidak"
+                )
+
+                # ================= EWALLET =================
+                ewallet_rows = []
+
+                if ewallet.get("gopay_user"):
+                    ewallet_rows.append(
+                        f"Gopay: {ewallet.get('gopay_user')}"
+                    )
+
+                if ewallet.get("ovo"):
+                     ewallet_rows.append(
+                        f"OVO: {ewallet.get('ovo')}"
+                    )
+
+                if ewallet.get("dana"):
+                    ewallet_rows.append(
+                        f"Dana: {ewallet.get('dana')}"
+                    )
+
+                ewallet_text = "\n".join(ewallet_rows)
+
+                return f"""
+    ━━━━━━━━━━━━━━
+
+    📞 {number}
+
+    👤 Nama:
+    {name}
+
+    📱 Whatsapp:
+    {wa_status}
+
+    💳 Ewallet:
+    {ewallet_text if ewallet_text else '-'}
+
+    🌐 Search:
+    {search_engine if search_engine else '-'}
+
+    📌 Tag:
+    {tag_result}
+
+    ━━━━━━━━
+    """
 
             except Exception as e:
+
+                print("BULK ERROR:", str(e))
 
                 return f"❌ {number} | ERROR"
 
@@ -881,15 +955,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⚠️ Data tidak ditemukan / API bermasalah"
             )
 
-        if not use_quota(user_id):
-            return await loading.edit_text(
-                "❌ quota habis"
-            )
+        if not cached:
+
+            if not use_quota(user_id):
+                return await loading.edit_text(
+                    "❌ quota habis"
+                )
 
         if data and not cached:
             set_cache(number, data)
 
-        add_usage(user_id)
+        if not cached:
+            add_usage(user_id)
 
         tags_raw_counter = extract_tags(data)
 
